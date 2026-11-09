@@ -6,7 +6,7 @@
      (apps-script.gs) tutulur. PC ↔ telefon böyle eşitlenir.
    - Klasör linki ve senkron adresi repoda değil, cihazın ayarlarında durur. */
 
-const APP_VERSION = '2026.11.09-8';
+const APP_VERSION = '2026.11.09-9';
 const CFG = window.MIRIL_CONFIG || {};
 const DRIVE = CFG.DRIVE_API || 'https://www.googleapis.com/drive/v3/';
 const HAS_KEY = !!CFG.API_KEY && !CFG.API_KEY.startsWith('BURAYA');
@@ -218,7 +218,12 @@ function wavUrl(sec, freq) {
   return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
 }
 
-const mediaUrl = (id) => `${DRIVE}files/${id}?alt=media&key=${encodeURIComponent(CFG.API_KEY)}`;
+// quotaUser: Google'ın standart parametresi. Her cihaz kendi kimliğiyle ister (istek sınırları cihaz başına ayrılır);
+// hata sonrası yeni bir değer, tarayıcının önbelleğe aldığı bozuk cevabı atlamayı sağlar.
+let DEV_ID = LS.get('miril.dev');
+if (!DEV_ID) { DEV_ID = 'm' + uid() + uid(); LS.set('miril.dev', DEV_ID); }
+const BUST = {};
+const mediaUrl = (id) => `${DRIVE}files/${id}?alt=media&key=${encodeURIComponent(CFG.API_KEY)}&quotaUser=${DEV_ID}${BUST[id] ? '-' + BUST[id] : ''}`;
 const netSrc = (f) => f.demo ? (demoUrls[f.id] ||= wavUrl(f.demo.sec, f.demo.freq)) : mediaUrl(f.id);
 const swOn = () => !!navigator.serviceWorker?.controller;
 const fileSrc = (f) => (S.dl.has(f.id) && swOn()) ? 'offline/' + f.id : netSrc(f);
@@ -1373,6 +1378,7 @@ function openBook(b, autoplay) {
   if (S.book?.id === b.id) { openPlayer(); if (autoplay && audio.paused) togglePlay(); return; }
   S.book = b;
   S.touched = false;   // bu kitapta çalma/sarma yapılana kadar ilerleme kaydedilmez
+  S.wantPlay = !!autoplay;
   const st = bookStats(b);
   const p = prog(b.id);
   const startIdx = st.done ? 0 : st.idx;
@@ -1430,11 +1436,12 @@ function catchUp(play) {
 }
 
 async function safePlay() {
+  S.wantPlay = true;
   // Oynat'a basınca önce diğer cihaza bak (pencere hep açık kalsa bile doğru yerden başlasın).
   if (audio.paused && now() - lastPull > 4000 && await catchUp(true)) return;
   try { await audio.play(); } catch (e) { if (e.name !== 'AbortError') console.warn(e); }
 }
-function togglePlay() { audio.paused ? safePlay() : audio.pause(); }
+function togglePlay() { if (audio.paused) safePlay(); else { S.wantPlay = false; audio.pause(); } }
 
 function recordPosition(force) {
   if (!S.book || !S.profile) return;
@@ -1480,6 +1487,13 @@ audio.addEventListener('error', async () => {
   if (!audio.src) return;
   const f = S.book?.files[S.idx];
   if (!navigator.onLine && f && !S.dl.has(f.id)) return toast('İnternet yok ve bu bölüm indirilmemiş', null, null, 5000);
+  if (f && !f.demo && !(S.dl.has(f.id) && swOn()) && (BUST[f.id] || 0) < 2) {
+    BUST[f.id] = (BUST[f.id] || 0) + 1;
+    console.warn('oynatma hatası, önbellek atlanarak tekrar deneniyor', f.name, audio.error?.message);
+    const t = S.pendingSeek ?? audio.currentTime ?? 0;
+    loadFile(S.idx, t, !!S.wantPlay);   // kullanıcı oynat'a basmadıysa yine çalmasın
+    return;
+  }
   // Dosya Drive'da değişmiş olabilir (ör. araç küçülttü → yeni kimlik). Kütüphaneyi yenileyip aynı yerden dene.
   if (f && !DEMO && navigator.onLine && !retried.has(f.id)) {
     retried.add(f.id);
@@ -1521,7 +1535,7 @@ audio.addEventListener('error', async () => {
     } catch (e) { why += ' · Drive bağlantı hatası: ' + (e.message || e); }
   }
   console.warn('oynatma hatası', f?.name, code, why);
-  toast(`Dosya çalınamadı. ${why || 'Biraz sonra tekrar dene.'}`, 'Tekrar dene', () => { retried.clear(); reloadCurrent(true); }, 15000);
+  toast(`Dosya çalınamadı. ${why || 'Biraz sonra tekrar dene.'}`, 'Tekrar dene', () => { retried.clear(); if (f) BUST[f.id] = 0; reloadCurrent(true); }, 15000);
 });
 
 function seekBy(d) {
