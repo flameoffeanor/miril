@@ -300,3 +300,5 @@ input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 
 .sr-where { font-size: 12px; font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; }
 .sr-text { font-size: 15px; line-height: 1.45; color: var(--ink); }
 .sr-text mark { background: var(--accent-soft); color: inherit; border-radius: 4px; padding: 0 2px; }
+
+.link-btn.inline { margin: 0; font-size: inherit; color: var(--accent); }

@@ -542,7 +542,20 @@ const DEMO_SENT = ['Sabahın ilk ışıkları kasabanın dar sokaklarına düşt
 function demoTx(f) {
   if (TX.has(f.id)) return TX.get(f.id);
   const segs = []; let t = 0.6, k = hash(f.id);
+  const fi = +f.id.split('_')[1] || 0;
+  const ORDS = ['Birinci', 'İkinci', 'Üçüncü', 'Dördüncü', 'Beşinci', 'Altıncı', 'Yedinci', 'Sekizinci', 'Dokuzuncu', 'Onuncu', 'On Birinci', 'On İkinci', 'On Üçüncü', 'On Dördüncü', 'On Beşinci', 'On Altıncı', 'On Yedinci', 'On Sekizinci', 'On Dokuzuncu', 'Yirminci'];
+  const TITLES = ['Kasabada Sabah', 'Şişedeki Mektup', 'Fırtına', 'Eski Dostlar', 'Yolculuk', 'Dönüş'];
+  const heads = [[0.6, `Bölüm ${fi * 2 + 1}.`], [Math.round(f.demo.sec * 0.5), `${ORDS[(fi * 2 + 1) % 20]} Bölüm.`]];
+  let hi = 0;
   while (t < f.demo.sec - 4) {
+    if (hi < heads.length && t >= heads[hi][0]) {
+      const h = heads[hi++][1], tt = TITLES[(fi + hi) % TITLES.length] + '.';
+      segs.push([+t.toFixed(2), +(t + 1.2).toFixed(2), h, [[+t.toFixed(2), +(t + 1.2).toFixed(2), ' ' + h]]]);
+      t += 2;
+      segs.push([+t.toFixed(2), +(t + 1.4).toFixed(2), tt, [[+t.toFixed(2), +(t + 1.4).toFixed(2), ' ' + tt]]]);
+      t += 2.4;
+      continue;
+    }
     const text = DEMO_SENT[k++ % DEMO_SENT.length];
     const ws = text.split(' '), per = 0.36;
     const words = ws.map((w, i) => [+(t + i * per).toFixed(2), +(t + (i + 1) * per - 0.05).toFixed(2), ' ' + w]);
@@ -636,6 +649,127 @@ function txScrollTo(el, smooth) {
   $('#tx-now').classList.add('hidden');
 }
 (function txLoop() { txTick(false); setTimeout(() => requestAnimationFrame(txLoop), 90); })();
+
+/* ---- bölüm algılama (metinden) ----
+   "Bölüm 4", "4. Bölüm", "Dördüncü Bölüm", "IV. Kısım", "Önsöz"… gibi bir cümle,
+   önünde sessizlik varsa (ya da kısa, tek başına bir cümleyse) bölüm başı sayılır.
+   Hemen ardından gelen kısa cümle başlık olarak eklenir. */
+const NUMW = '(?:bir|iki|uc|dort|dord|bes|alti|yedi|sekiz|dokuz|on|yirmi|otuz|kirk|elli|altmis|yetmis|seksen|doksan|yuz)';
+const ORD = `(?:(?:${NUMW}\\s*){1,3}(?:inci|nci|uncu|ncu|nunci|ıncı)?|ilk|son)`;
+const NUM = `(?:\\d{1,3}|[ivxlc]{1,7}|${ORD})`;
+const KIND = '(?:bolum|kisim|perde|part|chapter)';
+const CH_RE = new RegExp(`^(?:${KIND}\\s*:?\\s*${NUM}\\b|${NUM}\\s*[.\\-]?\\s*${KIND}\\b)`);
+const SPECIAL_RE = /^(onsoz|on soz|giris|sonsoz|son soz|prolog|epilog|son|sunus|ithaf|yazarin notu|cevirmenin notu)[.!:]?$/;
+const fold2 = (x) => fold(x).replace(/[“”"'’]/g, '').trim();
+function detectChapters(datas) { // datas: [{i, data}]
+  const out = [];
+  for (const { i, data } of datas) {
+    const segs = data?.s || [];
+    let skip = -1;
+    segs.forEach((sg, k) => {
+      if (k === skip) return;
+      const text = sg[2].trim();
+      const ft = fold2(text);
+      const gap = k ? sg[0] - segs[k - 1][1] : 99;
+      const isCh = CH_RE.test(ft), isSp = SPECIAL_RE.test(ft);
+      if (!isCh && !isSp) return;
+      if (!(gap >= 0.9 || text.length <= 45)) return;   // cümle içinde geçen "bölüm 3" sayılmasın
+      if (isSp && text.length > 25) return;
+      let title = text.replace(/[.:;,\s]+$/, '');
+      if (title.length > 70) {
+        // "Bölüm 4. Gece yarısı kapı çalındı ve…" → numaralı kısmı al
+        const m = title.match(/^[^.:]{1,40}[.:]/);
+        title = m ? m[0].replace(/[.:]$/, '') : title.slice(0, 60) + '…';
+      } else {
+        const nx = segs[k + 1];
+        // başlık: bölüm adından sonra duraklayıp okunan kısa cümle
+        if (nx && text.length <= 30 && nx[2].trim().length <= 40 && nx[2].trim().split(/\s+/).length <= 6
+            && nx[0] - sg[1] >= 0.6 && (segs[k + 2] ? segs[k + 2][0] - nx[1] >= 0.6 : true)) {
+          title += ' — ' + nx[2].trim().replace(/[.:;,\s]+$/, '');
+          skip = k + 1;
+        }
+      }
+      const prev = out[out.length - 1];
+      const head = (x) => fold2(x.split(' — ')[0]);
+      if (prev && prev.i === i && sg[0] - prev.t < 20 && head(prev.title) === head(title)) return; // aynı başlık iki kez okunmuş
+      out.push({ i, t: Math.max(0, sg[0] - 0.4), title });
+    });
+  }
+  return out;
+}
+const CH = new Map(); // bookId → [{i,t,title}] | 'loading'
+function chKey(b) { return 'miril.ch.' + b.id; }
+function chSig(b) { return b.files.map((f) => f.tx || (f.demo ? f.id : '')).join(','); }
+async function loadChapters(b) {
+  if (!hasTx(b) || CH.get(b.id) === 'loading') return;
+  if (CH.has(b.id)) return;
+  const saved = LS.get(chKey(b));
+  if (saved && saved.sig === chSig(b) && saved.v === 1) { CH.set(b.id, saved.list); onChapters(b); return; }
+  CH.set(b.id, 'loading');
+  const files = b.files.map((f, i) => ({ f, i })).filter(({ f }) => f.tx || f.demo);
+  const datas = [];
+  let next = 0, fail = 0;
+  await Promise.all(Array.from({ length: 4 }, async () => {
+    while (next < files.length) {
+      const k = next++;
+      try { datas[k] = { i: files[k].i, data: await loadTx(files[k].f) }; } catch { fail++; }
+    }
+  }));
+  if (fail) { CH.delete(b.id); return; }      // sonra tekrar dener
+  const list = detectChapters(datas.filter(Boolean));
+  CH.set(b.id, list);
+  LS.set(chKey(b), { v: 1, sig: chSig(b), list });
+  onChapters(b);
+}
+const chaptersOf = (b) => { const c = CH.get(b?.id); return Array.isArray(c) && c.length >= 2 ? c : null; };
+function curChapter(b = S.book) {
+  const ch = chaptersOf(b);
+  if (!ch) return -1;
+  const t = audio.currentTime || S.pendingSeek || 0;
+  let ans = -1;
+  for (let k = 0; k < ch.length; k++) { const c = ch[k]; if (c.i < S.idx || (c.i === S.idx && c.t <= t + 0.5)) ans = k; else break; }
+  return ans;
+}
+function onChapters(b) { if (S.book?.id === b.id) { S.curCh = null; renderChapterLabel(); } }
+function renderChapterLabel() {
+  const b = S.book;
+  if (!b) return;
+  const ch = chaptersOf(b);
+  let txt;
+  if (ch) {
+    const k = curChapter(b);
+    if (k === S.curCh) return;
+    S.curCh = k;
+    txt = k >= 0 ? ch[k].title : 'Başlangıç';
+    updateMediaSession();
+  } else txt = b.files.length > 1 ? `${S.idx + 1} / ${b.files.length} · ${chapterName(b.files[S.idx], S.idx)}` : '';
+  $('#p-chapter').textContent = txt;
+  $('#btn-prev').style.visibility = $('#btn-next').style.visibility = (ch || b.files.length > 1) ? 'visible' : 'hidden';
+}
+function jumpChapter(dir) {
+  const ch = chaptersOf(S.book);
+  if (!ch) {
+    if (dir < 0) return audio.currentTime > 5 ? (audio.currentTime = 0) : goChapter(S.idx - 1);
+    return goChapter(S.idx + 1);
+  }
+  let k = curChapter();
+  if (dir < 0) {
+    const c = ch[k];
+    if (c && c.i === S.idx && (audio.currentTime - c.t) > 5) return seekToPos(c.i, c.t);
+    k = Math.max(0, k - 1);
+    if (curChapter() === -1) return seekToPos(0, 0);
+  } else {
+    k = k + 1;
+    if (k >= ch.length) return goChapter(S.idx + 1);
+  }
+  seekToPos(ch[k].i, ch[k].t);
+}
+function seekToPos(i, t) {
+  const play = !audio.paused;
+  if (i === S.idx && isFinite(audio.duration)) { audio.currentTime = t; recordPosition(true); }
+  else { loadFile(i, t, play); recordPosition(true); }
+  S.curCh = null; renderChapterLabel();
+}
 
 /* ---- kitap içi arama ---- */
 const fold = (x) => String(x).toLocaleLowerCase('tr').replace(/ı/g, 'i').normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -991,7 +1125,7 @@ audio.addEventListener('waiting', () => $('#btn-play').classList.add('loading'))
 audio.addEventListener('playing', () => $('#btn-play').classList.remove('loading'));
 audio.addEventListener('play', () => { audio.playbackRate = prefs().speed || 1; renderPlayState(); });
 audio.addEventListener('pause', () => { renderPlayState(); recordPosition(true); });
-audio.addEventListener('timeupdate', () => { renderTime(); recordPosition(false); checkSleep(); });
+audio.addEventListener('timeupdate', () => { renderChapterLabel(); renderTime(); recordPosition(false); checkSleep(); });
 audio.addEventListener('ended', () => {
   if (S.sleepChapter) { clearSleep(); recordPosition(true); toast('Bölüm bitti, iyi uykular 🌙'); return; }
   if (S.idx < S.book.files.length - 1) loadFile(S.idx + 1, 0, true);
@@ -1057,8 +1191,9 @@ function chapterName(f, i) {
 }
 function renderChapter() {
   const b = S.book;
-  $('#p-chapter').textContent = b.files.length > 1 ? `${S.idx + 1} / ${b.files.length} · ${chapterName(b.files[S.idx], S.idx)}` : '';
-  $('#btn-prev').style.visibility = $('#btn-next').style.visibility = b.files.length > 1 ? 'visible' : 'hidden';
+  S.curCh = null;
+  renderChapterLabel();
+  loadChapters(b);
   renderMini();
   renderTx();
 }
@@ -1102,7 +1237,7 @@ function updateMediaSession() {
   if (!('mediaSession' in navigator) || !S.book) return;
   const src = coverSrc(S.book);
   navigator.mediaSession.metadata = new MediaMetadata({
-    title: S.book.files.length > 1 ? chapterName(S.book.files[S.idx], S.idx) : S.book.title,
+    title: (chaptersOf(S.book) && S.curCh >= 0) ? chaptersOf(S.book)[S.curCh].title : S.book.files.length > 1 ? chapterName(S.book.files[S.idx], S.idx) : S.book.title,
     artist: S.book.author, album: S.book.title,
     artwork: src ? [{ src: new URL(src, location.href).href, sizes: '512x512' }] : [{ src: new URL('icon-512.png', location.href).href, sizes: '512x512', type: 'image/png' }],
   });
@@ -1112,8 +1247,8 @@ function updateMediaSession() {
   set('pause', () => audio.pause());
   set('seekbackward', (d) => seekBy(-(d.seekOffset || 15)));
   set('seekforward', (d) => seekBy(d.seekOffset || 30));
-  set('previoustrack', () => goChapter(S.idx - 1));
-  set('nexttrack', () => goChapter(S.idx + 1));
+  set('previoustrack', () => jumpChapter(-1));
+  set('nexttrack', () => jumpChapter(1));
   set('seekto', (d) => { audio.currentTime = d.seekTime; recordPosition(true); });
 }
 
@@ -1171,13 +1306,34 @@ function openSheet(html) {
 }
 function closeSheet() { S.dlSheetFor = null; $('#sheet').classList.remove('on'); $('#sheet-backdrop').classList.remove('on'); }
 
-function chaptersSheet() {
+// Bölümün kitap içindeki zamanı (dosya süreleri biliniyorsa toplam, yoksa "dosya·süre")
+function chTime(b, c) {
+  const durs = b.files.slice(0, c.i).map((f) => S.sync.durations[f.id] || 0);
+  if (durs.every((d) => d > 0)) return fmt(durs.reduce((x, y) => x + y, 0) + c.t);
+  return `${c.i + 1}·${fmt(c.t)}`;
+}
+function chaptersSheet(showFiles) {
   const b = S.book;
-  openSheet(`<h3>Bölümler</h3><div class="opt-list">${b.files.map((f, i) => {
-    const d = S.sync.durations[f.id];
-    return `<button class="opt ${i === S.idx ? 'on' : ''} ${i < S.idx ? 'done' : ''}" data-i="${i}"><span class="num">${i + 1}</span><span class="lbl">${esc(chapterName(f, i))}</span><span class="dur">${d ? fmt(d) : ''}</span></button>`;
-  }).join('')}</div>`);
-  document.querySelectorAll('.opt[data-i]').forEach((el) => el.onclick = () => { goChapter(+el.dataset.i, true); closeSheet(); });
+  const ch = chaptersOf(b);
+  const state = CH.get(b.id);
+  if (ch && !showFiles) {
+    const cur = curChapter(b);
+    const multi = b.files.length > 1;
+    openSheet(`<h3>Bölümler</h3><p class="sheet-note small" style="margin:-6px 0 10px">Metinden algılandı${multi ? ' · <button class="link-btn inline" id="ch-files">Dosyalara göre</button>' : ''}</p>
+      <div class="opt-list">${ch.map((c, k) => `<button class="opt ${k === cur ? 'on' : ''} ${k < cur ? 'done' : ''}" data-c="${k}"><span class="num">${k + 1}</span><span class="lbl">${esc(c.title)}</span><span class="dur">${chTime(b, c)}</span></button>`).join('')}</div>`);
+    document.querySelectorAll('.opt[data-c]').forEach((el) => el.onclick = () => { const c = ch[+el.dataset.c]; closeSheet(); seekToPos(c.i, c.t); if (audio.paused) safePlay(); });
+    $('#ch-files') && ($('#ch-files').onclick = () => chaptersSheet(true));
+  } else {
+    const note = !showFiles && hasTx(b)
+      ? (state === 'loading' ? '<p class="sheet-note small">Metinden bölümler aranıyor…</p>'
+        : Array.isArray(state) ? '<p class="sheet-note small">Metinde "Bölüm 1" gibi bölüm başlıkları bulunamadı; dosyalar gösteriliyor.</p>' : '')
+      : '';
+    openSheet(`<h3>${showFiles ? 'Dosyalar' : 'Bölümler'}</h3>${note}<div class="opt-list">${b.files.map((f, i) => {
+      const d = S.sync.durations[f.id];
+      return `<button class="opt ${i === S.idx ? 'on' : ''} ${i < S.idx ? 'done' : ''}" data-i="${i}"><span class="num">${i + 1}</span><span class="lbl">${esc(chapterName(f, i))}</span><span class="dur">${d ? fmt(d) : ''}</span></button>`;
+    }).join('')}</div>`);
+    document.querySelectorAll('.opt[data-i]').forEach((el) => el.onclick = () => { goChapter(+el.dataset.i, true); closeSheet(); });
+  }
   $('.opt.on')?.scrollIntoView({ block: 'center' });
 }
 function speedSheet() {
@@ -1207,9 +1363,9 @@ function wire() {
   $('#btn-close-player').onclick = closePlayer;
   $('#btn-back').onclick = () => seekBy(-15);
   $('#btn-fwd').onclick = () => seekBy(30);
-  $('#btn-prev').onclick = () => (audio.currentTime > 5 ? (audio.currentTime = 0) : goChapter(S.idx - 1));
-  $('#btn-next').onclick = () => goChapter(S.idx + 1);
-  $('#btn-chapters').onclick = chaptersSheet;
+  $('#btn-prev').onclick = () => jumpChapter(-1);
+  $('#btn-next').onclick = () => jumpChapter(1);
+  $('#btn-chapters').onclick = () => chaptersSheet(false);
   $('#btn-speed').onclick = speedSheet;
   $('#btn-sleep').onclick = sleepSheet;
   $('#sheet-backdrop').onclick = closeSheet;
