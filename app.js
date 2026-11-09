@@ -221,7 +221,114 @@ const mediaUrl = (id) => `${DRIVE}files/${id}?alt=media&key=${encodeURIComponent
 const netSrc = (f) => f.demo ? (demoUrls[f.id] ||= wavUrl(f.demo.sec, f.demo.freq)) : mediaUrl(f.id);
 const swOn = () => !!navigator.serviceWorker?.controller;
 const fileSrc = (f) => (S.dl.has(f.id) && swOn()) ? 'offline/' + f.id : netSrc(f);
-const coverSrc = (b) => b.cover ? ((S.dl.has(b.cover) && swOn()) ? 'offline/' + b.cover : mediaUrl(b.cover)) : null;
+const driveCoverSrc = (b) => b.cover ? ((S.dl.has(b.cover) && swOn()) ? 'offline/' + b.cover : mediaUrl(b.cover)) : null;
+// Kapak önceliği: elle seçilen > Drive'daki kapak.jpg > internetten otomatik bulunan > renkli kapak
+function coverSrc(b) {
+  const o = coverOverride(b);
+  if (o === 'none') return null;
+  if (o) return o;
+  if (b.cover) return driveCoverSrc(b);
+  return autoCover(b);
+}
+
+/* ---- Kapakları internetten bul (Google Books + Open Library) ----
+   Elle seçilen kapak senkron dosyasına yazılır (tüm cihazlarda aynı); otomatik sonuç her cihazda önbellekte. */
+const CV_KEY = (b) => 'cv:' + bookKey(b);
+const coverOverride = (b) => (S.sync?.durations || {})[CV_KEY(b)] || null;
+let CVC = LS.get('miril.cv', {});
+function autoCover(b) { const e = CVC[bookKey(b)]; return e && e.url ? e.url : null; }
+const BOOKS_API = CFG.BOOKS_API || 'https://www.googleapis.com/books/v1/volumes';
+const OL_API = CFG.OL_API || 'https://openlibrary.org/search.json';
+const OL_COVERS = CFG.OL_COVERS || 'https://covers.openlibrary.org/b/id/';
+async function searchCovers(b) {
+  const out = [];
+  const ft = fold(b.title), fa = fold(b.author || '');
+  const score = (title, authors, lang) => {
+    const t = fold(title || ''), a = fold(authors || '');
+    let s = 0;
+    if (t === ft) s += 4; else if (t.includes(ft) || ft.includes(t)) s += 2;
+    if (fa && a.includes(fa.split(' ').pop())) s += 2;
+    if (/^(tr|tur)$/.test(lang || '')) s += 2;
+    return s;
+  };
+  const jobs = [
+    (async () => {
+      const q = `intitle:${b.title}` + (b.author ? ` inauthor:${b.author}` : '');
+      const r = await fetch(`${BOOKS_API}?q=${encodeURIComponent(q)}&maxResults=20&printType=books`);
+      if (!r.ok) return;
+      const j = await r.json();
+      for (const it of j.items || []) {
+        const v = it.volumeInfo || {}, il = v.imageLinks;
+        if (!il) continue;
+        const url = (il.thumbnail || il.smallThumbnail).replace(/^http:\/\/books\.google/, 'https://books.google').replace('&edge=curl', '');
+        out.push({ url, title: v.title, by: (v.authors || []).join(', '), src: 'Google Books', s: score(v.title, (v.authors || []).join(' '), v.language) });
+      }
+    })(),
+    (async () => {
+      const p = new URLSearchParams({ title: b.title, limit: '12', fields: 'title,author_name,cover_i,language' });
+      if (b.author) p.set('author', b.author);
+      const r = await fetch(`${OL_API}?${p}`);
+      if (!r.ok) return;
+      const j = await r.json();
+      for (const d of j.docs || []) {
+        if (!d.cover_i) continue;
+        out.push({ url: `${OL_COVERS}${d.cover_i}-L.jpg`, title: d.title, by: (d.author_name || []).join(', '), src: 'Open Library', s: score(d.title, (d.author_name || []).join(' '), (d.language || []).includes('tur') ? 'tur' : '') + 0.5 });
+      }
+    })(),
+  ];
+  await Promise.all(jobs.map((p) => p.catch((e) => console.warn('kapak arama', e))));
+  const seen = new Set();
+  return out.filter((c) => !seen.has(c.url) && seen.add(c.url)).sort((x, y) => y.s - x.s);
+}
+let cvBusy = false;
+async function autoCovers() {
+  if (cvBusy || DEMO || !navigator.onLine) return;
+  cvBusy = true;
+  try {
+    for (const b of S.books) {
+      const key = bookKey(b);
+      const e = CVC[key];
+      if (b.cover || coverOverride(b) || (e && (e.url || now() - e.at < 7 * 864e5))) continue;
+      let best = null;
+      try { best = (await searchCovers(b)).find((c) => c.s >= 4) || null; } catch {}
+      CVC[key] = { url: best ? best.url : '', at: now() };
+      LS.set('miril.cv', CVC);
+      if (best) refreshCovers(b);
+      await new Promise((r) => setTimeout(r, 400));
+    }
+  } finally { cvBusy = false; }
+}
+function refreshCovers(b) {
+  if (S.profile && $('#v-library').classList.contains('on')) renderLibrary();
+  if (S.book && bookKey(S.book) === bookKey(b)) { $('#p-cover').innerHTML = coverHTML(S.book, 'lg'); renderMini(); updateMediaSession(); }
+}
+function coverSheet() {
+  const b = S.book;
+  if (!b) return;
+  const o = coverOverride(b);
+  openSheet(`<h3>Kapak</h3>
+    <p class="sheet-note small" style="margin:-6px 0 12px">${o ? 'Elle seçilmiş kapak kullanılıyor.' : b.cover ? "Drive'daki kapak resmi kullanılıyor." : autoCover(b) ? 'İnternetten otomatik bulundu.' : 'Kapak bulunamadı, renkli kapak gösteriliyor.'}</p>
+    <div class="cv-grid" id="cv-grid"><p class="sheet-note">Aranıyor…</p></div>
+    <div class="opt-list" style="margin-top:12px">
+      ${b.cover ? `<button class="opt" data-cv="drive">Drive'daki kapak resmini kullan</button>` : ''}
+      <button class="opt" data-cv="none">Renkli kapak kullan</button>
+      ${o ? '<button class="opt" data-cv="auto">Otomatik seçime dön</button>' : ''}
+    </div>`);
+  // '' = elle seçim yok (Drive kapağı varsa o, yoksa otomatik). Silmek yerine boş yazıyoruz ki senkronda geri gelmesin.
+  const set = (v) => {
+    S.sync.durations[CV_KEY(b)] = (v === 'auto' || v === 'drive') ? '' : v;
+    saveLocal(); pushSoon(300); closeSheet(); refreshCovers(b);
+  };
+  document.querySelectorAll('[data-cv]').forEach((el) => el.onclick = () => set(el.dataset.cv));
+  searchCovers(b).then((list) => {
+    const g = $('#cv-grid');
+    if (!g) return;
+    g.innerHTML = list.length
+      ? list.slice(0, 12).map((c, k) => `<button class="cv-item" data-k="${k}" title="${esc(c.title)} — ${esc(c.by)} (${c.src})"><img src="${esc(c.url)}" alt="" loading="lazy" onerror="this.closest('.cv-item').remove()"><span>${esc(c.src === 'Google Books' ? 'Google' : 'OpenLib')}</span></button>`).join('')
+      : `<p class="sheet-note">${navigator.onLine ? 'İnternette kapak bulunamadı.' : 'İnternet yok.'} Drive'da kitap klasörüne "kapak.jpg" koyabilirsin.</p>`;
+    g.querySelectorAll('.cv-item').forEach((el) => el.onclick = () => set(list[+el.dataset.k].url));
+  });
+}
 
 /* =========================================================
    İndirmeler (uygulama içi depolama — internetsiz dinleme)
@@ -963,7 +1070,7 @@ async function runSearch(b, query) {
    ========================================================= */
 function coverHTML(b, size = 'md') {
   const src = coverSrc(b);
-  const img = src ? `<img src="${src}" alt="" loading="lazy" style="position:absolute;inset:0" onerror="this.remove()">` : '';
+  const img = src ? `<img class="cv-bg" src="${esc(src)}" alt="" loading="lazy" onerror="this.remove()"><img class="cv-fg" src="${esc(src)}" alt="" loading="lazy" onerror="this.remove()">` : '';
   const [c1, c2] = COVER_PAIRS[hash(b.title + b.author) % COVER_PAIRS.length];
   const hsh = hash(b.title);
   const dots = [0, 1, 2].map((i) => {
@@ -1111,6 +1218,7 @@ function renderLibrary() {
       ? `<div class="big">📥</div><p>Henüz indirilen kitap yok.<br>Bir kitabı açıp <b>İndir</b>'e dokun.</p>`
       : `<div class="big">🌙</div><p>Bu rafta kitap yok.</p>`;
   } else empty.classList.add('hidden');
+  setTimeout(autoCovers, 1200);
 }
 
 function showSkeleton() {
@@ -1604,6 +1712,7 @@ function wire() {
   $('#btn-dl').onclick = () => S.book && dlSheet(S.book);
   $('#btn-text').onclick = () => setTextMode(!S.textMode);
   $('#btn-mark').onclick = () => S.book && marksSheet();
+  $('#p-cover').onclick = coverSheet;
   $('#btn-search').onclick = searchSheet;
   const panel = $('#tx-panel');
   const userScroll = () => { txUserScroll = now(); $('#tx-now').classList.remove('hidden'); };
