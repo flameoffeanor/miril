@@ -6,7 +6,7 @@
      (apps-script.gs) tutulur. PC ↔ telefon böyle eşitlenir.
    - Klasör linki ve senkron adresi repoda değil, cihazın ayarlarında durur. */
 
-const APP_VERSION = '2026.11.09-7';
+const APP_VERSION = '2026.11.09-8';
 const CFG = window.MIRIL_CONFIG || {};
 const DRIVE = CFG.DRIVE_API || 'https://www.googleapis.com/drive/v3/';
 const HAS_KEY = !!CFG.API_KEY && !CFG.API_KEY.startsWith('BURAYA');
@@ -1503,6 +1503,20 @@ audio.addEventListener('error', async () => {
       } else {
         const j = await r.json();
         why += ` · Drive dosyayı görüyor (${Math.round((+j.size || 0) / 1e6)} MB, ${j.mimeType})`;
+        // Sesin kendisini isteyince ne geliyor? (başlıkları alınca iptal: dosyayı indirmez)
+        const ac = new AbortController();
+        try {
+          const m = await fetch(mediaUrl(f.id), { signal: ac.signal });
+          const ct = m.headers.get('Content-Type') || '?';
+          if (m.ok && !/json|html|text/.test(ct)) { why += ` · ses isteği ${m.status} (${ct})`; ac.abort(); }
+          else {
+            let t = '';
+            try { t = (await m.text()).slice(0, 400); } catch {}
+            let msg = t;
+            try { const jj = JSON.parse(t); msg = jj.error?.message || jj.error?.errors?.[0]?.reason || t; } catch {}
+            why += ` · ses isteği ${m.status} (${ct}): ${msg.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160)}`;
+          }
+        } catch (e) { if (e.name !== 'AbortError') why += ' · ses isteği engellendi: ' + (e.message || e); }
       }
     } catch (e) { why += ' · Drive bağlantı hatası: ' + (e.message || e); }
   }
