@@ -235,13 +235,16 @@ function coverSrc(b) {
    Elle seçilen kapak senkron dosyasına yazılır (tüm cihazlarda aynı); otomatik sonuç her cihazda önbellekte. */
 const CV_KEY = (b) => 'cv:' + bookKey(b);
 const coverOverride = (b) => (S.sync?.durations || {})[CV_KEY(b)] || null;
-let CVC = LS.get('miril.cv', {});
+let CVC = LS.get('miril.cv2', {});
 function autoCover(b) { const e = CVC[bookKey(b)]; return e && e.url ? e.url : null; }
 const BOOKS_API = CFG.BOOKS_API || 'https://www.googleapis.com/books/v1/volumes';
 const OL_API = CFG.OL_API || 'https://openlibrary.org/search.json';
 const OL_COVERS = CFG.OL_COVERS || 'https://covers.openlibrary.org/b/id/';
+let CV_ERR = [];   // son aramadaki servis hataları (teşhis için)
 async function searchCovers(b) {
   const out = [];
+  const errs = [];
+  let okAny = false;
   const ft = fold(b.title), fa = fold(b.author || '');
   const score = (title, authors, lang) => {
     const t = fold(title || ''), a = fold(authors || '');
@@ -254,8 +257,12 @@ async function searchCovers(b) {
   const jobs = [
     (async () => {
       const q = `intitle:${b.title}` + (b.author ? ` inauthor:${b.author}` : '');
-      const r = await fetch(`${BOOKS_API}?q=${encodeURIComponent(q)}&maxResults=20&printType=books`);
-      if (!r.ok) return;
+      const url = `${BOOKS_API}?q=${encodeURIComponent(q)}&maxResults=20&printType=books`;
+      // Önce Drive anahtarıyla dene (Books API o projede açıksa kota sorunu olmaz), olmazsa anahtarsız.
+      let r = HAS_KEY && !CFG.BOOKS_API ? await fetch(url + '&key=' + encodeURIComponent(CFG.API_KEY)).catch(() => null) : null;
+      if (!r || !r.ok) r = await fetch(url);
+      if (!r.ok) { let m = ''; try { m = (await r.json()).error?.message || ''; } catch {} errs.push(`Google Books ${r.status}${m ? ': ' + m.slice(0, 120) : ''}`); return; }
+      okAny = true;
       const j = await r.json();
       for (const it of j.items || []) {
         const v = it.volumeInfo || {}, il = v.imageLinks;
@@ -268,7 +275,8 @@ async function searchCovers(b) {
       const p = new URLSearchParams({ title: b.title, limit: '12', fields: 'title,author_name,cover_i,language' });
       if (b.author) p.set('author', b.author);
       const r = await fetch(`${OL_API}?${p}`);
-      if (!r.ok) return;
+      if (!r.ok) { errs.push(`Open Library ${r.status}`); return; }
+      okAny = true;
       const j = await r.json();
       for (const d of j.docs || []) {
         if (!d.cover_i) continue;
@@ -276,7 +284,9 @@ async function searchCovers(b) {
       }
     })(),
   ];
-  await Promise.all(jobs.map((p) => p.catch((e) => console.warn('kapak arama', e))));
+  await Promise.all(jobs.map((p) => p.catch((e) => { errs.push('Bağlantı: ' + (e.message || e)); })));
+  CV_ERR = errs;
+  if (!okAny) { const e = new Error(errs.join(' · ') || 'kapak servislerine ulaşılamadı'); e.cv = true; throw e; }
   const seen = new Set();
   return out.filter((c) => !seen.has(c.url) && seen.add(c.url)).sort((x, y) => y.s - x.s);
 }
@@ -290,9 +300,10 @@ async function autoCovers() {
       const e = CVC[key];
       if (b.cover || coverOverride(b) || (e && (e.url || now() - e.at < 7 * 864e5))) continue;
       let best = null;
-      try { best = (await searchCovers(b)).find((c) => c.s >= 4) || null; } catch {}
+      try { best = (await searchCovers(b)).find((c) => c.s >= 4) || null; }
+      catch (e) { console.warn('kapak', b.title, e.message); continue; }   // servis hatası: sonra tekrar dene
       CVC[key] = { url: best ? best.url : '', at: now() };
-      LS.set('miril.cv', CVC);
+      LS.set('miril.cv2', CVC);
       if (best) refreshCovers(b);
       await new Promise((r) => setTimeout(r, 400));
     }
@@ -320,12 +331,13 @@ function coverSheet() {
     saveLocal(); pushSoon(300); closeSheet(); refreshCovers(b);
   };
   document.querySelectorAll('[data-cv]').forEach((el) => el.onclick = () => set(el.dataset.cv));
-  searchCovers(b).then((list) => {
+  searchCovers(b).catch((e) => { const g = $('#cv-grid'); if (g) g.innerHTML = `<p class="sheet-note">Kapak aranamadı: ${esc(e.message)}</p>`; return null; }).then((list) => {
+    if (!list) return;
     const g = $('#cv-grid');
     if (!g) return;
     g.innerHTML = list.length
       ? list.slice(0, 12).map((c, k) => `<button class="cv-item" data-k="${k}" title="${esc(c.title)} — ${esc(c.by)} (${c.src})"><img src="${esc(c.url)}" alt="" loading="lazy" onerror="this.closest('.cv-item').remove()"><span>${esc(c.src === 'Google Books' ? 'Google' : 'OpenLib')}</span></button>`).join('')
-      : `<p class="sheet-note">${navigator.onLine ? 'İnternette kapak bulunamadı.' : 'İnternet yok.'} Drive'da kitap klasörüne "kapak.jpg" koyabilirsin.</p>`;
+      : `<p class="sheet-note">${navigator.onLine ? 'İnternette kapak bulunamadı.' : 'İnternet yok.'}${CV_ERR.length ? ' (' + esc(CV_ERR.join(' · ')) + ')' : ''} Drive'da kitap klasörüne "kapak.jpg" koyabilirsin.</p>`;
     g.querySelectorAll('.cv-item').forEach((el) => el.onclick = () => set(list[+el.dataset.k].url));
   });
 }
