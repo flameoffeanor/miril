@@ -6,7 +6,7 @@
      (apps-script.gs) tutulur. PC ↔ telefon böyle eşitlenir.
    - Klasör linki ve senkron adresi repoda değil, cihazın ayarlarında durur. */
 
-const APP_VERSION = '2026.11.09-11';
+const APP_VERSION = '2026.11.09-12';
 const CFG = window.MIRIL_CONFIG || {};
 const DRIVE = CFG.DRIVE_API || 'https://www.googleapis.com/drive/v3/';
 const HAS_KEY = !!CFG.API_KEY && !CFG.API_KEY.startsWith('BURAYA');
@@ -998,11 +998,12 @@ function detectChapters(datas) { // datas: [{i, data}]
 const CH = new Map(); // bookId → [{i,t,title}] | 'loading'
 function chKey(b) { return 'miril.ch.' + b.id; }
 function chSig(b) { return b.files.map((f) => f.tx || (f.demo ? f.id : '')).join(','); }
-async function loadChapters(b) {
+async function loadChapters(b, force) {
   if (!hasTx(b) || CH.get(b.id) === 'loading') return;
   if (CH.has(b.id)) return;
   const saved = LS.get(chKey(b));
   if (saved && saved.sig === chSig(b) && saved.v === 1) { CH.set(b.id, saved.list); onChapters(b); return; }
+  if (!force && !S.touched) return;   // sadece açılıp bakılan kitap için büyük metin dosyalarını indirme
   CH.set(b.id, 'loading');
   const files = b.files.map((f, i) => ({ f, i })).filter(({ f }) => f.tx || f.demo);
   const datas = [];
@@ -1064,7 +1065,7 @@ function jumpChapter(dir) {
 }
 function seekToPos(i, t) {
   const play = !audio.paused;
-  if (i === S.idx && isFinite(audio.duration)) { audio.currentTime = t; recordPosition(true); }
+  if (i === S.idx) { setPos(t); recordPosition(true); }
   else { loadFile(i, t, play); recordPosition(true); }
   S.curCh = null; renderChapterLabel();
 }
@@ -1374,7 +1375,7 @@ function renderVol() {
       : '<svg viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4z"/><path d="M15.5 9.5a4 4 0 0 1 0 5M18.5 6.5a8.5 8.5 0 0 1 0 11"/></svg>';
   $('#btn-mute').setAttribute('aria-label', VOL === 0 ? 'Sesi aç' : 'Sesi kapat');
 }
-audio.preload = 'auto';
+audio.preload = 'none';   // ▶'ye basılana kadar Drive'a istek gitmesin
 const ICON_PLAY = '<svg viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></svg>';
 const ICON_PAUSE = '<svg viewBox="0 0 24 24"><rect x="5.5" y="4" width="4.5" height="16" rx="1.5"/><rect x="14" y="4" width="4.5" height="16" rx="1.5"/></svg>';
 
@@ -1391,7 +1392,6 @@ function openBook(b, autoplay) {
   renderPlayerStatic();
   loadFile(startIdx, startT, autoplay);
   openPlayer();
-  probeDurations(b);
 }
 
 function loadFile(idx, t, play) {
@@ -1462,7 +1462,7 @@ function recordPosition(force) {
   if (!force && !S.touched) return;   // sadece açılıp bakıldıysa kayıt oluşturma
   if (audio.error || !audio.src) return;   // oynatıcı hatada/boşken konum güvenilmez
   S.touched = true;
-  setProg(S.book.id, { fileId: f.id, t: Math.floor(audio.currentTime || S.pendingSeek || 0) });
+  setProg(S.book.id, { fileId: f.id, t: Math.floor(curPos()) });
   saveLocal();
   if (force || now() - S.lastRemotePush > 60000) pushSoon(force ? 300 : 0);
 }
@@ -1479,7 +1479,15 @@ audio.addEventListener('loadedmetadata', () => {
 });
 audio.addEventListener('canplay', () => $('#btn-play').classList.remove('loading'));
 audio.addEventListener('waiting', () => $('#btn-play').classList.add('loading'));
-audio.addEventListener('playing', () => $('#btn-play').classList.remove('loading'));
+audio.addEventListener('playing', () => {
+  $('#btn-play').classList.remove('loading');
+  if (S.book && S.probedFor !== S.book.id) {
+    S.probedFor = S.book.id;
+    const b = S.book;
+    loadChapters(b, true);
+    setTimeout(() => { if (S.book === b) probeDurations(b); }, 15000);
+  }
+});
 audio.addEventListener('play', () => { S.touched = true; audio.playbackRate = prefs().speed || 1; renderPlayState(); });
 audio.addEventListener('pause', () => { renderPlayState(); recordPosition(true); });
 audio.addEventListener('timeupdate', () => {
@@ -1519,7 +1527,9 @@ audio.addEventListener('error', async () => {
   const code = audio.error?.code;   // 1 iptal, 2 ağ, 3 çözme, 4 desteklenmiyor
   const pmsg = (audio.error?.message || '').slice(0, 120);
   let why = `Oynatıcı: kod ${code}${pmsg ? ' (' + pmsg + ')' : ''}`;
-  if (f && !f.demo && !(S.dl.has(f.id) && swOn())) {
+  S.diagDone ||= new Set();
+  if (f && !f.demo && !(S.dl.has(f.id) && swOn()) && !S.diagDone.has(f.id)) {
+    S.diagDone.add(f.id);
     try {
       const r = await fetch(`${DRIVE}files/${f.id}?fields=id,size,mimeType&key=${encodeURIComponent(CFG.API_KEY)}`);
       if (!r.ok) {
@@ -1550,15 +1560,21 @@ audio.addEventListener('error', async () => {
   toast(`Dosya çalınamadı. ${why || 'Biraz sonra tekrar dene.'}`, 'Tekrar dene', () => { retried.clear(); if (f) BUST[f.id] = 0; reloadCurrent(true); }, 15000);
 });
 
+const loaded = () => audio.readyState >= 1 && S.pendingSeek == null;
+const curPos = () => (loaded() ? audio.currentTime : (S.pendingSeek ?? S.lastPos ?? 0));
+function setPos(t) {
+  t = Math.max(0, t);
+  if (loaded()) audio.currentTime = t; else { S.pendingSeek = t; S.lastPos = t; renderTime(); }
+}
 function seekBy(d) {
-  const dur = audio.duration || 0;
-  let t = (audio.currentTime || 0) + d;
+  const dur = audio.duration || S.sync.durations[S.book.files[S.idx]?.id] || 0;
+  let t = curPos() + d;
   if (t < 0 && S.idx > 0 && d < 0) { // önceki bölüme taş
     const prevDur = S.sync.durations[S.book.files[S.idx - 1].id];
     if (prevDur) return loadFile(S.idx - 1, Math.max(0, prevDur + t), !audio.paused);
   }
   if (dur && t >= dur - 0.5 && S.idx < S.book.files.length - 1) return loadFile(S.idx + 1, Math.max(0, t - dur), !audio.paused);
-  audio.currentTime = Math.max(0, Math.min(t, dur ? dur - 0.5 : t));
+  setPos(Math.min(t, dur ? dur - 0.5 : t));
   recordPosition(true);
 }
 function goChapter(i, play = !audio.paused) {
@@ -1615,7 +1631,7 @@ function renderPlayState() {
 let seeking = false;
 function renderTime() {
   if (!S.book) return;
-  const cur = audio.currentTime || 0, dur = audio.duration || S.sync.durations[S.book.files[S.idx]?.id] || 0;
+  const cur = curPos(), dur = audio.duration || S.sync.durations[S.book.files[S.idx]?.id] || 0;
   const pct = dur ? cur / dur : 0;
   if (!seeking) { $('#p-seek').value = Math.round(pct * 1000); $('#p-seek').style.setProperty('--p', (pct * 100) + '%'); }
   $('#p-cur').textContent = fmt(cur);
@@ -1721,6 +1737,7 @@ function chTime(b, c) {
 }
 function chaptersSheet(showFiles) {
   const b = S.book;
+  loadChapters(b, true);
   const ch = chaptersOf(b);
   const state = CH.get(b.id);
   if (ch && !showFiles) {
@@ -1816,8 +1833,8 @@ function wire() {
     $('#p-cur').textContent = fmt(dur * seek.value / 1000);
   };
   seek.onchange = () => {
-    const dur = audio.duration || 0;
-    if (dur) audio.currentTime = dur * seek.value / 1000;
+    const dur = audio.duration || S.sync.durations[S.book?.files[S.idx]?.id] || 0;
+    if (dur) setPos(dur * seek.value / 1000);
     seeking = false; recordPosition(true);
   };
 
@@ -1874,7 +1891,7 @@ function wire() {
     if (!w || !sgEl || !TXV?.data) return;
     const sg = TXV.data.s[+sgEl.dataset.s];
     const word = sg[3]?.[+w.dataset.w];
-    audio.currentTime = Math.max(0, (word ? word[0] : sg[0]) - 0.15);
+    setPos((word ? word[0] : sg[0]) - 0.15);
     txUserScroll = 0; recordPosition(true);
     if (audio.paused) safePlay();
   });
