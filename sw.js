@@ -3,7 +3,7 @@
 //    güncellemeler internet varken hemen gelir.
 // 2) "offline/<id>": indirilen kitapları cihaz depolamasından çalar (ileri/geri sarma dahil).
 
-const SHELL = 'miril-shell-v1';
+const SHELL = 'miril-shell-v2';
 const DL = 'miril-audio-v1';
 const FONT = 'miril-font-v1';
 
@@ -13,10 +13,13 @@ const SHELL_FILES = ['./', 'index.html', 'app.js', 'style.css', 'config.js', 'ma
 self.addEventListener('install', (e) => {
   self.skipWaiting();
   e.waitUntil(caches.open(SHELL).then((c) =>
-    Promise.all(SHELL_FILES.map((f) => fetch(new Request(f, { cache: 'reload' })).then((r) => r.ok && c.put(f === './' ? new URL('./', self.registration.scope).href : new URL(f, self.registration.scope).href, r)).catch(() => {})))
+    Promise.all(SHELL_FILES.map((f) => fetch(new Request(f, { cache: 'no-cache' })).then((r) => r.ok && c.put(f === './' ? new URL('./', self.registration.scope).href : new URL(f, self.registration.scope).href, r)).catch(() => {})))
   ));
 });
-self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+self.addEventListener('activate', (e) => e.waitUntil((async () => {
+  for (const k of await caches.keys()) if (k.startsWith('miril-shell-') && k !== SHELL) await caches.delete(k);
+  await self.clients.claim();
+})()));
 
 self.addEventListener('fetch', (e) => {
   const req = e.request;
@@ -43,7 +46,8 @@ self.addEventListener('fetch', (e) => {
 async function networkFirst(req) {
   const c = await caches.open(SHELL);
   try {
-    const r = await fetch(req);
+    // no-cache: tarayıcı önbelleğini atla, sunucuya "değişti mi?" diye sor (değişmediyse küçük 304 cevabı)
+    const r = await fetch(req, { cache: 'no-cache' });
     if (r.ok) c.put(req, r.clone());
     return r;
   } catch (err) {

@@ -6,6 +6,7 @@
      (apps-script.gs) tutulur. PC ↔ telefon böyle eşitlenir.
    - Klasör linki ve senkron adresi repoda değil, cihazın ayarlarında durur. */
 
+const APP_VERSION = '2026.11.09-6';
 const CFG = window.MIRIL_CONFIG || {};
 const DRIVE = CFG.DRIVE_API || 'https://www.googleapis.com/drive/v3/';
 const HAS_KEY = !!CFG.API_KEY && !CFG.API_KEY.startsWith('BURAYA');
@@ -358,7 +359,7 @@ function coverSheet() {
   if (!b) return;
   const o = coverOverride(b);
   openSheet(`<h3>Kapak</h3>
-    <p class="sheet-note small" style="margin:-6px 0 12px">${o ? 'Elle seçilmiş kapak kullanılıyor.' : b.cover ? "Drive'daki kapak resmi kullanılıyor." : autoCover(b) ? 'İnternetten otomatik bulundu.' : 'Kapak bulunamadı, renkli kapak gösteriliyor.'}</p>
+    <p class="sheet-note small" style="margin:-6px 0 12px">${o === 'none' ? 'Renkli kapak seçili.' : o ? 'Elle seçilmiş kapak kullanılıyor.' : b.cover ? "Drive'daki kapak resmi kullanılıyor." : autoCover(b) ? 'İnternetten otomatik bulundu.' : 'Kapak bulunamadı, renkli kapak gösteriliyor.'}</p>
     <div class="cv-grid" id="cv-grid"><p class="sheet-note">Aranıyor…</p></div>
     <div class="cv-url">
       <label class="field"><span>Ya da görsel linki yapıştır</span>
@@ -1881,7 +1882,8 @@ function settingsSheet() {
     <div class="row-btns"><button class="big-btn" id="st-save">Kaydet ve dene</button></div>
     ${ready() ? `<div class="share-box"><b>Diğer cihazlar için</b><p>Bu linki eşine ya da kendi telefonuna gönder. Açtığı anda bu ayarlarla kurulur.</p>
       <button class="big-btn alt" id="st-share">Kurulum linkini paylaş</button></div>` : ''}
-    <div class="share-box"><b>Bu cihazdaki indirilenler</b><div id="st-dl"><p>Hesaplanıyor…</p></div></div>`);
+    <div class="share-box"><b>Bu cihazdaki indirilenler</b><div id="st-dl"><p>Hesaplanıyor…</p></div></div>
+    <p class="sheet-note small" style="text-align:center;margin-top:16px">Sürüm ${APP_VERSION}</p>`);
   renderDlSettings();
   $('#st-save').onclick = async () => {
     const folder = $('#st-folder').value.trim(), sync = $('#st-sync').value.trim();
@@ -1939,7 +1941,15 @@ async function boot() {
   loadSettings();
   if ('serviceWorker' in navigator) {
     try {
-      await navigator.serviceWorker.register('sw.js', { scope: './' });
+      const reg = await navigator.serviceWorker.register('sw.js', { scope: './', updateViaCache: 'none' });
+      reg.update().catch(() => {});
+      let hadController = !!navigator.serviceWorker.controller;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!hadController) { hadController = true; return; }
+        // yeni sürüm yüklendi: bir şey çalmıyorsa hemen yenile, çalıyorsa haber ver
+        if (audio.paused) location.reload();
+        else toast('Yeni sürüm hazır', 'Yenile', () => { recordPosition(true); location.reload(); }, 0);
+      });
       if (!navigator.serviceWorker.controller) {
         await Promise.race([
           new Promise((r) => navigator.serviceWorker.addEventListener('controllerchange', r, { once: true })),
