@@ -1250,7 +1250,7 @@ function renderLibrary() {
       <div class="continue-text"><small>Kaldığın yerden</small><h3>${esc(last.title)}</h3><p class="meta-line">${esc(last.author || '')}${last.author ? ' · ' : ''}${sub}</p>
       <div class="bar"><i style="width:${(st.pct * 100).toFixed(1)}%"></i></div></div>
       <button class="resume" aria-label="Devam et"><svg viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></svg></button></div>`;
-    $('#cont-card').onclick = () => openBook(last, true);
+    $('#cont-card').onclick = (e) => openBook(last, !!e.target.closest('.resume'));
   } else cont.innerHTML = '';
 
   // Filtreler
@@ -1273,7 +1273,7 @@ function renderLibrary() {
   // rozet kapağın içinde dursun
   $('#grid').querySelectorAll('.book').forEach((el) => {
     el.querySelectorAll('.badge, .dl-badge').forEach((x) => el.querySelector('.cover').appendChild(x));
-    el.onclick = () => openBook(S.books.find((b) => b.id === el.dataset.id), true);
+    el.onclick = () => openBook(S.books.find((b) => b.id === el.dataset.id), false);
     el.onkeydown = (e) => { if (e.key === 'Enter') el.click(); };
   });
 
@@ -1371,6 +1371,7 @@ const ICON_PAUSE = '<svg viewBox="0 0 24 24"><rect x="5.5" y="4" width="4.5" hei
 function openBook(b, autoplay) {
   if (S.book?.id === b.id) { openPlayer(); if (autoplay && audio.paused) togglePlay(); return; }
   S.book = b;
+  S.touched = false;   // bu kitapta çalma/sarma yapılana kadar ilerleme kaydedilmez
   const st = bookStats(b);
   const p = prog(b.id);
   const startIdx = st.done ? 0 : st.idx;
@@ -1439,6 +1440,8 @@ function recordPosition(force) {
   const f = S.book.files[S.idx];
   if (!f) return;
   if (!force && now() - S.lastLocalSave < 3000) return;
+  if (!force && !S.touched) return;   // sadece açılıp bakıldıysa kayıt oluşturma
+  S.touched = true;
   setProg(S.book.id, { fileId: f.id, t: Math.floor(audio.currentTime || S.pendingSeek || 0) });
   saveLocal();
   if (force || now() - S.lastRemotePush > 60000) pushSoon(force ? 300 : 0);
@@ -1457,7 +1460,7 @@ audio.addEventListener('loadedmetadata', () => {
 audio.addEventListener('canplay', () => $('#btn-play').classList.remove('loading'));
 audio.addEventListener('waiting', () => $('#btn-play').classList.add('loading'));
 audio.addEventListener('playing', () => $('#btn-play').classList.remove('loading'));
-audio.addEventListener('play', () => { audio.playbackRate = prefs().speed || 1; renderPlayState(); });
+audio.addEventListener('play', () => { S.touched = true; audio.playbackRate = prefs().speed || 1; renderPlayState(); });
 audio.addEventListener('pause', () => { renderPlayState(); recordPosition(true); });
 audio.addEventListener('timeupdate', () => { renderChapterLabel(); renderTime(); recordPosition(false); checkSleep(); });
 audio.addEventListener('ended', () => {
@@ -1693,6 +1696,28 @@ function chaptersSheet(showFiles) {
     }).join('')}</div>`);
     document.querySelectorAll('.opt[data-i]').forEach((el) => el.onclick = () => { goChapter(+el.dataset.i, true); closeSheet(); });
   }
+  const foot = document.createElement('div');
+  foot.className = 'opt-list book-actions';
+  foot.innerHTML = `<button class="opt" id="bk-reset">↺ Baştan başlat (ilerlemeyi sıfırla)</button><button class="opt" id="bk-done">✓ Bitti olarak işaretle</button>`;
+  $('#sheet-body').appendChild(foot);
+  $('#bk-reset').onclick = () => {
+    if (!confirm(`"${b.title}" için kaldığın yer sıfırlansın mı? (Ayraçların silinmez)`)) return;
+    audio.pause();
+    setProg(b.id, { fileId: b.files[0].id, t: 0 });
+    saveLocal(); pushSoon(300);
+    S.touched = false;
+    loadFile(0, 0, false);
+    closeSheet(); renderTime();
+    toast('Kitap en başa alındı');
+  };
+  $('#bk-done').onclick = () => {
+    audio.pause();
+    setProg(b.id, { fileId: b.files[0].id, t: 0, done: true });
+    saveLocal(); pushSoon(300);
+    S.touched = false;
+    closeSheet(); renderTime();
+    toast('Bitti olarak işaretlendi ✓');
+  };
   $('.opt.on')?.scrollIntoView({ block: 'center' });
 }
 function speedSheet() {

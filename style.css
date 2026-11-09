@@ -356,3 +356,5 @@ input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 
 .cv-url .field { margin-bottom: 10px; }
 .cv-url .big-btn { width: 100%; justify-content: center; }
 .cv-url .field input { font-size: 14px; }
+.book-actions { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); }
+.book-actions .opt { color: var(--ink2); font-size: 14.5px; }
