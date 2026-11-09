@@ -261,3 +261,10 @@ input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 
 @media (max-width: 520px) { .shelf-head { flex-direction: column; align-items: flex-start; } .shelf-head .filters { width: calc(100% + 16px); margin-right: -16px; padding-right: 16px; } }
 .chips { gap: 6px; }
 .chip { padding: 9px 12px; font-size: 13.5px; }
+
+.volume { display: flex; align-items: center; gap: 8px; margin: 0 0 18px; padding: 0 2px; }
+.volume .icon-btn { width: 38px; height: 38px; flex: none; color: var(--ink2); }
+.volume .icon-btn svg { width: 21px; height: 21px; }
+.volume input[type=range]::-webkit-slider-runnable-track { height: 6px; }
+.volume input[type=range]::-webkit-slider-thumb { width: 18px; height: 18px; margin-top: -6px; border-width: 3px; }
+.volume input[type=range]::-moz-range-track { height: 6px; }

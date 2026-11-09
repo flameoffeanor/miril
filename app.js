@@ -652,6 +652,29 @@ async function refreshLibrary(manual) {
    Oynatıcı
    ========================================================= */
 const audio = new Audio();
+// Ses seviyesi bu cihaza özel (telefon/PC farklı olabilir).
+let VOL = Math.min(1, Math.max(0, +(LS.get('miril.vol', 1)) || 0));
+let VOL_BEFORE_MUTE = VOL || 1;
+audio.volume = VOL;
+function setVol(v, save = true) {
+  VOL = Math.min(1, Math.max(0, v));
+  if (VOL > 0) VOL_BEFORE_MUTE = VOL;
+  if (!S.sleepEnd || S.sleepEnd - now() > 10000) audio.volume = VOL;
+  if (save) LS.set('miril.vol', VOL);
+  renderVol();
+}
+function renderVol() {
+  const el = $('#p-vol');
+  if (!el) return;
+  el.value = Math.round(VOL * 100);
+  el.style.setProperty('--p', VOL * 100 + '%');
+  $('#btn-mute').innerHTML = VOL === 0
+    ? '<svg viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4z"/><path d="M22 9l-6 6M16 9l6 6"/></svg>'
+    : VOL < 0.5
+      ? '<svg viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4z"/><path d="M15.5 9.5a4 4 0 0 1 0 5"/></svg>'
+      : '<svg viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4z"/><path d="M15.5 9.5a4 4 0 0 1 0 5M18.5 6.5a8.5 8.5 0 0 1 0 11"/></svg>';
+  $('#btn-mute').setAttribute('aria-label', VOL === 0 ? 'Sesi aç' : 'Sesi kapat');
+}
 audio.preload = 'auto';
 const ICON_PLAY = '<svg viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></svg>';
 const ICON_PAUSE = '<svg viewBox="0 0 24 24"><rect x="5.5" y="4" width="4.5" height="16" rx="1.5"/><rect x="14" y="4" width="4.5" height="16" rx="1.5"/></svg>';
@@ -872,12 +895,12 @@ function setSleep(min) {
   renderSleep();
   if (min) toast(min === 'ch' ? 'Bölüm sonunda duracak' : `${min} dk sonra duracak`);
 }
-function clearSleep() { S.sleepEnd = 0; S.sleepChapter = false; clearInterval(fadeTimer); audio.volume = 1; renderSleep(); }
+function clearSleep() { S.sleepEnd = 0; S.sleepChapter = false; clearInterval(fadeTimer); audio.volume = VOL; renderSleep(); }
 function checkSleep() {
   if (!S.sleepEnd) return;
   const left = S.sleepEnd - now();
   renderSleep();
-  if (left <= 10000 && left > 0) audio.volume = Math.max(0.05, left / 10000);
+  if (left <= 10000 && left > 0) audio.volume = VOL * Math.max(0.05, left / 10000);
   if (left <= 0) { audio.pause(); seekBy(-10); clearSleep(); }
 }
 function renderSleep() {
@@ -941,6 +964,12 @@ function wire() {
   $('#btn-refresh').onclick = () => refreshLibrary(true);
   $('#btn-settings').onclick = $('#btn-settings2').onclick = settingsSheet;
 
+  const vol = $('#p-vol');
+  vol.oninput = () => setVol(vol.value / 100, false);
+  vol.onchange = () => setVol(vol.value / 100);
+  $('#btn-mute').onclick = () => setVol(VOL > 0 ? 0 : VOL_BEFORE_MUTE);
+  renderVol();
+
   const seek = $('#p-seek');
   seek.oninput = () => {
     seeking = true;
@@ -964,6 +993,8 @@ function wire() {
     if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
     else if (e.key === 'ArrowLeft') seekBy(-15);
     else if (e.key === 'ArrowRight') seekBy(30);
+    else if (e.key === 'ArrowUp' && $('#player').classList.contains('open')) { e.preventDefault(); setVol(VOL + 0.1); }
+    else if (e.key === 'ArrowDown' && $('#player').classList.contains('open')) { e.preventDefault(); setVol(VOL - 0.1); }
     else if (e.key === 'Escape') { $('#sheet').classList.contains('on') ? closeSheet() : closePlayer(); }
   });
 
