@@ -1110,7 +1110,37 @@ function reloadCurrent(play) {
   loadFile(S.idx, t, play);
 }
 
+// Diğer cihazdaki son konumu çek; bu cihaz duraklatılmışken orası ilerideyse oraya geç.
+let lastPull = 0, catching = null;
+function catchUp(play) {
+  if (DEMO || !ready() || !S.profile) return Promise.resolve(false);
+  if (catching) return catching;
+  catching = (async () => {
+    try {
+      await Promise.race([pullRemote(), new Promise((_, rej) => setTimeout(() => rej(new Error('zaman aşımı')), 2500))]);
+    } catch (e) { console.warn('pull', e); return false; }
+    finally { lastPull = now(); }
+    if (S.sync.profiles[S.profile.id]?.deleted) { S.profile = null; show('profiles'); renderProfiles(); return false; }
+    let jumped = false;
+    if (S.book && audio.paused) {
+      const p = prog(S.book.id);
+      const pi = fileIndexOf(S.book, p);
+      const cur = S.pendingSeek ?? audio.currentTime ?? 0;
+      if (p && !p.done && (pi !== S.idx || Math.abs((p.t || 0) - cur) > 5)) {
+        loadFile(pi, Math.max(0, p.t - 3), play);
+        toast('Diğer cihazdaki yerden devam ediyor');
+        jumped = true;
+      }
+    }
+    if ($('#v-library').classList.contains('on') && !$('#player').classList.contains('open')) renderLibrary();
+    return jumped;
+  })().finally(() => { catching = null; });
+  return catching;
+}
+
 async function safePlay() {
+  // Oynat'a basınca önce diğer cihaza bak (pencere hep açık kalsa bile doğru yerden başlasın).
+  if (audio.paused && now() - lastPull > 4000 && await catchUp(true)) return;
   try { await audio.play(); } catch (e) { if (e.name !== 'AbortError') console.warn(e); }
 }
 function togglePlay() { audio.paused ? safePlay() : audio.pause(); }
@@ -1449,27 +1479,13 @@ function wire() {
   });
 
   // Sekme gizlenince kaydet; geri gelince diğer cihazdaki ilerlemeyi çek.
-  document.addEventListener('visibilitychange', async () => {
+  document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') { recordPosition(true); pushOnExit(); return; }
-    if (DEMO || !ready()) return;
-    try {
-      await pullRemote();
-      if (S.profile) {
-        if (S.profile && S.sync.profiles[S.profile.id]?.deleted) { S.profile = null; show('profiles'); renderProfiles(); return; }
-        if (S.book && audio.paused) {
-          const p = prog(S.book.id);
-          const f = S.book.files[S.idx];
-          const pi = fileIndexOf(S.book, p);
-          if (p && !p.done && (pi !== S.idx || Math.abs((p.t || 0) - audio.currentTime) > 5)) {
-            const idx = pi;
-            loadFile(idx, Math.max(0, p.t - 3), false);
-            toast('Diğer cihazdaki yerden devam ediyor');
-          }
-        }
-        renderLibrary();
-      }
-    } catch (e) { console.warn('pull', e); }
+    catchUp(false);
   });
+  // Pencere açık kalsa bile: odağa gelince ve duraklatılmışken 20 sn'de bir diğer cihazı kontrol et.
+  window.addEventListener('focus', () => { if (now() - lastPull > 3000) catchUp(false); });
+  setInterval(() => { if (document.visibilityState === 'visible' && audio.paused && now() - lastPull > 20000) catchUp(false); }, 5000);
   window.addEventListener('pagehide', () => { recordPosition(true); pushOnExit(); });
   window.addEventListener('beforeunload', (e) => { if (Object.keys(S.jobs).length) { e.preventDefault(); e.returnValue = ''; } });
   window.addEventListener('online', () => { toast('İnternet geri geldi'); refreshLibrary(false); pushSoon(500); });
