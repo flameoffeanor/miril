@@ -1007,6 +1007,20 @@ function showSkeleton() {
   $('#grid').innerHTML = Array.from({ length: 6 }, () => '<div><div class="skel"></div></div>').join('');
 }
 
+// Açık kitabın dosyaları Drive'da değiştiyse (küçültme vb.) yeni listeye geç, aynı bölümde kal.
+function syncOpenBook() {
+  if (!S.book) return;
+  const nb = S.books.find((b) => b.id === S.book.id) || S.books.find((b) => bookKey(b) === bookKey(S.book));
+  if (!nb || nb === S.book) return;
+  const cur = S.book.files[S.idx];
+  const same = nb.files.length === S.book.files.length && nb.files.every((f, i) => f.id === S.book.files[i].id && f.tx === S.book.files[i].tx);
+  let i = nb.files.findIndex((f) => f.id === cur?.id);
+  if (i < 0 && cur) i = nb.files.findIndex((f) => stem(f.name) === stem(cur.name));
+  if (i < 0) i = Math.min(S.idx, nb.files.length - 1);
+  S.book = nb; S.idx = i;
+  if (!same) { CH.delete(nb.id); TXV = null; renderChapter(); }
+}
+
 async function refreshLibrary(manual) {
   const btn = $('#btn-refresh');
   btn.classList.add('spin');
@@ -1016,6 +1030,7 @@ async function refreshLibrary(manual) {
       const r = await scanLibrary();
       S.books = r.books;
       LS.set('miril.lib', S.books);
+      syncOpenBook();
       pruneDownloads();
       backfillProgress();
     }
@@ -1136,12 +1151,22 @@ audio.addEventListener('ended', () => {
     toast(`"${S.book.title}" bitti 🎉`);
   }
 });
-audio.addEventListener('error', () => {
+const retried = new Set();
+audio.addEventListener('error', async () => {
   $('#btn-play').classList.remove('loading');
   if (!audio.src) return;
   const f = S.book?.files[S.idx];
-  if (!navigator.onLine && f && !S.dl.has(f.id)) toast('İnternet yok ve bu bölüm indirilmemiş', null, null, 5000);
-  else toast('Dosya çalınamadı', 'Tekrar dene', () => reloadCurrent(true), 6000);
+  if (!navigator.onLine && f && !S.dl.has(f.id)) return toast('İnternet yok ve bu bölüm indirilmemiş', null, null, 5000);
+  // Dosya Drive'da değişmiş olabilir (ör. araç küçülttü → yeni kimlik). Kütüphaneyi yenileyip aynı yerden dene.
+  if (f && !DEMO && navigator.onLine && !retried.has(f.id)) {
+    retried.add(f.id);
+    const t = S.pendingSeek ?? audio.currentTime ?? 0;
+    toast('Dosya değişmiş olabilir, kütüphane yenileniyor…', null, null, 4000);
+    await refreshLibrary(false);
+    const nf = S.book?.files[S.idx];
+    if (nf && nf.id !== f.id) { loadFile(S.idx, t, true); return; }
+  }
+  toast('Dosya çalınamadı. Drive yüklemesi sürüyor olabilir, biraz sonra tekrar dene.', 'Tekrar dene', () => { retried.clear(); reloadCurrent(true); }, 8000);
 });
 
 function seekBy(d) {
