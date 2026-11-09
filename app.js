@@ -11,6 +11,7 @@ const DRIVE = CFG.DRIVE_API || 'https://www.googleapis.com/drive/v3/';
 const HAS_KEY = !!CFG.API_KEY && !CFG.API_KEY.startsWith('BURAYA');
 const AUDIO_RE = /\.(mp3|m4a|m4b|aac|ogg|oga|opus|flac|wav)$/i;
 const IMG_RE = /\.(jpe?g|png|webp)$/i;
+const TX_RE = /\.miril\.json$/i;
 const AVATARS = ['🦊','🐻','🐰','🐼','🐨','🦉','🐸','🐯','🐧','🐹','🦔','🐢','🐱','🐶','🦁','🐙'];
 const COLORS = ['#F6B8A6','#F9D88B','#B9DDB4','#A9CFEA','#CDB8EC','#F3B5D3'];
 const SPEEDS = [0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
@@ -140,15 +141,16 @@ const isImage = (f) => IMG_RE.test(f.name);
 
 async function collect(id, prefix, depth) {
   const kids = await listChildren(id);
-  const audio = [], images = [];
+  const audio = [], images = [], txs = [];
   const subs = [];
   for (const k of kids) {
     if (isFolder(k)) { if (depth < 3) subs.push(collect(k.id, prefix + k.name + '/', depth + 1)); }
+    else if (TX_RE.test(k.name)) txs.push({ id: k.id, path: prefix + k.name.replace(TX_RE, '') });
     else if (isAudio(k)) audio.push({ id: k.id, name: k.name, path: prefix + k.name, size: +k.size || 0 });
     else if (isImage(k)) images.push(k);
   }
-  for (const s of await Promise.all(subs)) { audio.push(...s.audio); images.push(...s.images); }
-  return { audio, images };
+  for (const s of await Promise.all(subs)) { audio.push(...s.audio); images.push(...s.images); txs.push(...s.txs); }
+  return { audio, images, txs };
 }
 
 function parseName(name) {
@@ -167,14 +169,19 @@ async function scanLibrary() {
   await api(`files/${rootId}?fields=id,name`);
   const kids = await listChildren(rootId);
   const books = [];
+  const rootTx = new Map(kids.filter((k) => TX_RE.test(k.name)).map((k) => [k.name.replace(TX_RE, ''), k.id]));
   await Promise.all(kids.map(async (k) => {
     if (isFolder(k)) {
-      const { audio, images } = await collect(k.id, '', 1);
+      const { audio, images, txs } = await collect(k.id, '', 1);
       if (!audio.length) return;
       audio.sort((a, b) => natural.compare(a.path, b.path));
+      const tx = new Map(txs.map((t) => [t.path, t.id]));
+      audio.forEach((f) => { if (tx.has(f.path)) f.tx = tx.get(f.path); });
       books.push({ id: k.id, ...parseName(k.name), files: audio, cover: pickCover(images) });
-    } else if (isAudio(k)) {
-      books.push({ id: k.id, ...parseName(k.name), files: [{ id: k.id, name: k.name, path: k.name, size: +k.size || 0 }], cover: null });
+    } else if (isAudio(k) && !TX_RE.test(k.name)) {
+      const f = { id: k.id, name: k.name, path: k.name, size: +k.size || 0 };
+      if (rootTx.has(k.name)) f.tx = rootTx.get(k.name);
+      books.push({ id: k.id, ...parseName(k.name), files: [f], cover: null });
     }
   }));
   books.sort((a, b) => natural.compare(a.title, b.title));
@@ -264,19 +271,23 @@ async function downloadBook(b) {
   if (!DEMO && !navigator.onLine) return toast('İnternet yok');
   try { await navigator.storage?.persist?.(); } catch {}
   const todo = b.files.filter((f) => !S.dl.has(f.id));
-  const items = [...(b.cover && !S.dl.has(b.cover) && !DEMO ? [{ id: b.cover, cover: true }] : []), ...todo];
+  const items = [
+    ...(b.cover && !S.dl.has(b.cover) && !DEMO ? [{ id: b.cover, aux: true }] : []),
+    ...b.files.filter((f) => f.tx && !S.dl.has(f.tx)).map((f) => ({ id: f.tx, aux: true })),
+    ...todo,
+  ];
   const job = S.jobs[b.id] = { done: 0, total: todo.reduce((a, f) => a + (f.size || 0), 0) || 1, ctrl: new AbortController() };
   renderDl(true);
   let ok = true;
   try {
     const c = await caches.open(DL_CACHE);
     for (const f of items) {
-      const r = await fetch(f.cover ? mediaUrl(f.id) : netSrc(f), { signal: job.ctrl.signal });
+      const r = await fetch(f.aux ? mediaUrl(f.id) : netSrc(f), { signal: job.ctrl.signal });
       if (!r.ok) throw new Error('Drive ' + r.status);
       const counter = new TransformStream({
-        transform(chunk, ctl) { if (!f.cover) { job.done += chunk.byteLength; renderDl(); } ctl.enqueue(chunk); },
+        transform(chunk, ctl) { if (!f.aux) { job.done += chunk.byteLength; renderDl(); } ctl.enqueue(chunk); },
       });
-      const type = r.headers.get('Content-Type') || (f.cover ? 'image/jpeg' : 'audio/mpeg');
+      const type = r.headers.get('Content-Type') || (f.aux ? 'application/octet-stream' : 'audio/mpeg');
       await c.put(offKey(f.id), new Response(r.body.pipeThrough(counter), { headers: { 'Content-Type': type } }));
       S.dl.add(f.id);
     }
@@ -292,10 +303,42 @@ async function downloadBook(b) {
   renderDl(true);
 }
 
+// Eski ilerleme kayıtlarına dosya adı/sırası ekle → dosya kimliği sonradan değişse de yer kaybolmaz.
+function backfillProgress() {
+  let changed = false;
+  for (const books of Object.values(S.sync.progress)) {
+    for (const [bid, v] of Object.entries(books)) {
+      if (v.fn && v.nm) continue;
+      const b = S.books.find((x) => x.id === bid);
+      if (!b) continue;
+      const i = b.files.findIndex((f) => f.id === v.fileId);
+      if (i < 0) continue;
+      books[bid] = { ...v, i, fn: stem(b.files[i].name), nm: bookKey(b), at: (v.at || 0) + 1 };
+      changed = true;
+    }
+  }
+  if (changed) { saveLocal(); pushSoon(1000); }
+}
+
+// Drive'da artık olmayan dosyaların indirmelerini sil (ör. küçültülüp değişen sesler).
+async function pruneDownloads() {
+  if (!S.dl.size || !('caches' in window)) return;
+  const live = new Set();
+  S.books.forEach((b) => { if (b.cover) live.add(b.cover); b.files.forEach((f) => { live.add(f.id); if (f.tx) live.add(f.tx); }); });
+  const dead = [...S.dl].filter((id) => !live.has(id) && !Object.keys(S.jobs).length);
+  if (!dead.length) return;
+  try {
+    const c = await caches.open(DL_CACHE);
+    await Promise.all(dead.map((id) => c.delete(offKey(id))));
+    dead.forEach((id) => S.dl.delete(id));
+    if (S.profile) renderLibrary();
+  } catch (e) { console.warn('prune', e); }
+}
+
 async function deleteDownload(b) {
   S.jobs[b.id]?.ctrl.abort();
   const c = await caches.open(DL_CACHE);
-  const ids = [...b.files.map((f) => f.id), ...(b.cover ? [b.cover] : [])];
+  const ids = [...b.files.map((f) => f.id), ...b.files.filter((f) => f.tx).map((f) => f.tx), ...(b.cover ? [b.cover] : [])];
   await Promise.all(ids.map((id) => c.delete(offKey(id))));
   ids.forEach((id) => S.dl.delete(id));
   // Şu an bu kitap cihazdan çalıyorsa internete geçir
@@ -438,12 +481,35 @@ function pushOnExit() {
 
 /* ---- profil ve ilerleme erişimi ---- */
 const profiles = () => Object.values(S.sync.profiles).filter((p) => !p.deleted).sort((a, b) => (a.created || 0) - (b.created || 0));
-const prog = (bid, pid = S.profile?.id) => S.sync.progress[pid]?.[bid] || null;
+// Dosya/kitap kimliği değişse bile (ör. ses küçültülüp yeniden yüklendiyse) ilerlemeyi ad üzerinden bul.
+const stem = (name) => String(name || '').replace(AUDIO_RE, '').trim().toLocaleLowerCase('tr');
+const bookKey = (b) => (b.author + '|' + b.title).toLocaleLowerCase('tr');
+function prog(bid, pid = S.profile?.id) {
+  const all = S.sync.progress[pid];
+  if (!all) return null;
+  if (all[bid]) return all[bid];
+  const b = S.books.find((x) => x.id === bid);
+  if (!b) return null;
+  const key = bookKey(b);
+  for (const [k, v] of Object.entries(all)) {
+    if (v.nm === key && !S.books.some((x) => x.id === k)) { all[bid] = v; return v; }
+  }
+  return null;
+}
+function fileIndexOf(b, p) {
+  if (!p) return 0;
+  let i = b.files.findIndex((f) => f.id === p.fileId);
+  if (i < 0 && p.fn) i = b.files.findIndex((f) => stem(f.name) === p.fn);
+  if (i < 0 && Number.isInteger(p.i) && p.i < b.files.length) i = p.i;
+  return Math.max(0, i);
+}
 const prefs = () => S.sync.prefs[S.profile.id] || {};
 function setPrefs(patch) { S.sync.prefs[S.profile.id] = { ...prefs(), ...patch, at: now() }; saveLocal(); pushSoon(); }
 function setProg(bid, data) {
   S.sync.progress[S.profile.id] ||= {};
-  S.sync.progress[S.profile.id][bid] = { ...data, at: now() };
+  const b = S.books.find((x) => x.id === bid) || S.book;
+  const i = b ? b.files.findIndex((f) => f.id === data.fileId) : -1;
+  S.sync.progress[S.profile.id][bid] = { ...data, i: i >= 0 ? i : undefined, fn: i >= 0 ? stem(b.files[i].name) : undefined, nm: b ? bookKey(b) : undefined, at: now() };
 }
 
 function bookStats(b) {
@@ -451,8 +517,7 @@ function bookStats(b) {
   const durs = b.files.map((f) => S.sync.durations[f.id] || 0);
   const known = durs.every((d) => d > 0);
   const total = known ? durs.reduce((a, c) => a + c, 0) : null;
-  let idx = p ? b.files.findIndex((f) => f.id === p.fileId) : 0;
-  if (idx < 0) idx = 0;
+  const idx = fileIndexOf(b, p);
   const t = p?.t || 0;
   if (p?.done) return { pct: 1, done: true, started: true, idx: 0, t: 0, total, left: 0 };
   let pct, left = null;
@@ -463,6 +528,190 @@ function bookStats(b) {
     pct = (idx + (durs[idx] ? t / durs[idx] : 0)) / b.files.length;
   }
   return { pct: Math.min(1, pct), done: false, started: !!p && (t > 0 || idx > 0), idx, t, total, left, at: p?.at || 0 };
+}
+
+/* =========================================================
+   Metin (transkript) — okunan yer vurgusu ve kitap içi arama
+   Dosya biçimi (PC'deki Mırıl Metin aracı üretir):
+   { v:1, dur, s: [[başlangıç, bitiş, "cümle", [[başlangıç, bitiş, " kelime"], …]], …] }
+   ========================================================= */
+const TX = new Map();
+const txSrc = (f) => (S.dl.has(f.tx) && swOn()) ? 'offline/' + f.tx : mediaUrl(f.tx);
+const hasTx = (b) => b.files.some((f) => f.tx || f.demo);
+const DEMO_SENT = ['Sabahın ilk ışıkları kasabanın dar sokaklarına düştüğünde herkes uyanmıştı.', 'Kahveci Hasan Efendi dükkânını açarken yine o eski şarkıyı mırıldanıyordu.', 'Rüzgâr denizden tuz kokusu getiriyor, martılar iskelenin üstünde dönüp duruyordu.', 'Ali çantasını omzuna attı ve hiç arkasına bakmadan yokuşu tırmanmaya başladı.', 'O gün her şeyin değişeceğini henüz kimse bilmiyordu.', 'Pencerenin önündeki kedi tembelce gerindi ve güneşe doğru döndü.', 'Uzaktan bir vapur düdüğü duyuldu, sesi tepelerde yankılandı.', 'Mektubu üçüncü kez okudu, her seferinde başka bir anlam buluyordu.'];
+function demoTx(f) {
+  if (TX.has(f.id)) return TX.get(f.id);
+  const segs = []; let t = 0.6, k = hash(f.id);
+  while (t < f.demo.sec - 4) {
+    const text = DEMO_SENT[k++ % DEMO_SENT.length];
+    const ws = text.split(' '), per = 0.36;
+    const words = ws.map((w, i) => [+(t + i * per).toFixed(2), +(t + (i + 1) * per - 0.05).toFixed(2), ' ' + w]);
+    const end = +(t + ws.length * per).toFixed(2);
+    segs.push([+t.toFixed(2), end, text, words]);
+    t = end + 0.5 + (k % 3) * 0.3;
+  }
+  const d = { v: 1, dur: f.demo.sec, s: segs };
+  TX.set(f.id, d);
+  return d;
+}
+async function loadTx(f) {
+  if (f.demo) return demoTx(f);
+  if (!f.tx) return null;
+  const c = TX.get(f.id);
+  if (c) return c;
+  const p = fetch(txSrc(f)).then((r) => { if (!r.ok) throw new Error('Metin ' + r.status); return r.json(); });
+  TX.set(f.id, p);
+  try { const d = await p; TX.set(f.id, d); return d; } catch (e) { TX.delete(f.id); throw e; }
+}
+
+let TXV = null; // görünen metin: { fileId, data, segEls, seg, word }
+function setTextMode(on) {
+  S.textMode = on;
+  LS.set('miril.textmode', on);
+  $('#player').classList.toggle('text-mode', on);
+  $('#btn-text').classList.toggle('on', on);
+  if (on) { TXV = null; renderTx(); }
+}
+async function renderTx() {
+  if (!S.textMode || !S.book) return;
+  const f = S.book.files[S.idx];
+  if (TXV?.fileId === f.id) return;
+  const body = $('#tx-body');
+  TXV = { fileId: f.id, data: null, segEls: [], seg: -1, word: null };
+  if (!f.tx && !f.demo) {
+    body.innerHTML = `<div class="tx-msg"><div class="big">📝</div><p>${hasTx(S.book) ? 'Bu bölümün metni yok.' : 'Bu kitabın metni henüz çıkarılmamış.'}</p><p class="small">PC'deki <b>Mırıl Metin</b> aracını çalıştırınca burada görünür.</p></div>`;
+    return;
+  }
+  body.innerHTML = '<div class="tx-msg"><p>Metin yükleniyor…</p></div>';
+  let d;
+  try { d = await loadTx(f); } catch (e) {
+    if (TXV?.fileId === f.id) body.innerHTML = `<div class="tx-msg"><p>Metin yüklenemedi${navigator.onLine ? '' : ' (internet yok, bu kitap indirilmemiş)'}.</p></div>`;
+    return;
+  }
+  if (TXV?.fileId !== f.id) return;
+  TXV.data = d;
+  // Cümleleri paragraflara grupla: uzun sessizlikte ya da her 7 cümlede bir yeni paragraf.
+  let html = '<p>', n = 0;
+  d.s.forEach((sg, i) => {
+    if (i && (sg[0] - d.s[i - 1][1] > 1.8 || n >= 7)) { html += '</p><p>'; n = 0; }
+    n++;
+    const words = sg[3]?.length ? sg[3] : [[sg[0], sg[1], ' ' + sg[2]]];
+    html += `<span class="seg" data-s="${i}">${words.map((w, j) => `<span class="w" data-w="${j}">${esc(w[2])}</span>`).join('')}</span>`;
+  });
+  body.innerHTML = html + '</p>';
+  TXV.segEls = [...body.querySelectorAll('.seg')];
+  TXV.seg = -1;
+  txTick(true);
+}
+function bsearch(arr, t, get) { // t'den küçük ya da eşit son başlangıç
+  let lo = 0, hi = arr.length - 1, ans = -1;
+  while (lo <= hi) { const m = (lo + hi) >> 1; if (get(arr[m]) <= t) { ans = m; lo = m + 1; } else hi = m - 1; }
+  return ans;
+}
+let txUserScroll = 0;
+function txTick(force) {
+  if (!TXV?.data || !S.textMode || !$('#player').classList.contains('open')) return;
+  const t = audio.currentTime || 0;
+  const segs = TXV.data.s;
+  const si = bsearch(segs, t + 0.05, (x) => x[0]);
+  if (si !== TXV.seg || force) {
+    TXV.segEls[TXV.seg]?.classList.remove('cur');
+    TXV.seg = si;
+    const el = TXV.segEls[si];
+    if (el) {
+      el.classList.add('cur');
+      if (now() - txUserScroll > 8000) txScrollTo(el, !force);
+    }
+  }
+  const sg = segs[si], el = TXV.segEls[si];
+  if (sg && el && sg[3]?.length) {
+    const wi = bsearch(sg[3], t + 0.05, (x) => x[0]);
+    const wel = wi >= 0 && t <= sg[1] + 0.3 ? el.children[wi] : null;
+    if (wel !== TXV.word) { TXV.word?.classList.remove('cur'); wel?.classList.add('cur'); TXV.word = wel; }
+  }
+}
+function txScrollTo(el, smooth) {
+  const panel = $('#tx-panel');
+  panel.scrollTo({ top: el.offsetTop - panel.clientHeight * 0.38, behavior: smooth ? 'smooth' : 'auto' });
+  $('#tx-now').classList.add('hidden');
+}
+(function txLoop() { txTick(false); setTimeout(() => requestAnimationFrame(txLoop), 90); })();
+
+/* ---- kitap içi arama ---- */
+const fold = (x) => String(x).toLocaleLowerCase('tr').replace(/ı/g, 'i').normalize('NFD').replace(/[̀-ͯ]/g, '');
+let searchSeq = 0;
+function searchSheet() {
+  const b = S.book;
+  if (!b) return;
+  openSheet(`<h3>Kitapta ara</h3>
+    <label class="field search-field"><input id="q" type="search" autocomplete="off" placeholder="Bir kelime ya da cümle yaz…" value="${esc(S.lastQuery || '')}"></label>
+    <div id="sr" class="sr"></div>`);
+  const q = $('#q');
+  let deb;
+  q.oninput = () => { clearTimeout(deb); deb = setTimeout(() => runSearch(b, q.value), 250); };
+  q.onkeydown = (e) => { if (e.key === 'Enter') { clearTimeout(deb); runSearch(b, q.value); q.blur(); } };
+  setTimeout(() => q.focus(), 350);
+  if (!hasTx(b)) $('#sr').innerHTML = `<p class="sheet-note">Bu kitabın metni henüz çıkarılmamış. PC'deki <b>Mırıl Metin</b> aracını çalıştırınca arama yapabilirsin.</p>`;
+  else if (q.value) runSearch(b, q.value);
+}
+async function runSearch(b, query) {
+  const seq = ++searchSeq;
+  const box = $('#sr');
+  S.lastQuery = query;
+  const fq = fold(query.trim());
+  if (!box || !hasTx(b)) return;
+  if (fq.length < 2) { box.innerHTML = ''; return; }
+  const files = b.files.map((f, i) => ({ f, i })).filter(({ f }) => f.tx || f.demo);
+  // Metinleri yükle (4'er 4'er)
+  let loaded = 0, failed = 0;
+  const datas = new Array(files.length);
+  const need = files.filter(({ f }) => !(TX.get(f.id) && !(TX.get(f.id) instanceof Promise)) && !f.demo).length;
+  if (need) box.innerHTML = `<p class="sheet-note">Metinler yükleniyor… 0/${files.length}</p>`;
+  let next = 0;
+  await Promise.all(Array.from({ length: 4 }, async () => {
+    while (next < files.length) {
+      const k = next++;
+      try { datas[k] = await loadTx(files[k].f); } catch { failed++; }
+      loaded++;
+      if (need && seq === searchSeq && box.isConnected) box.innerHTML = `<p class="sheet-note">Metinler yükleniyor… ${loaded}/${files.length}</p>`;
+    }
+  }));
+  if (seq !== searchSeq || !box.isConnected) return;
+  const res = [];
+  files.forEach(({ f, i }, k) => {
+    const d = datas[k];
+    if (!d) return;
+    d.s.forEach((sg) => {
+      const ft = fold(sg[2]);
+      const at = ft.indexOf(fq);
+      if (at < 0 || res.length >= 300) return;
+      // eşleşen ilk kelimenin zamanı
+      let t = sg[0];
+      if (sg[3]?.length) {
+        let pos = 0;
+        for (const w of sg[3]) { const wl = w[2].trim().length; if (pos + wl > at) { t = w[0]; break; } pos += wl + 1; }
+      }
+      res.push({ i, t, text: sg[2], at, len: fq.length, same: ft.length === sg[2].length });
+    });
+  });
+  const snip = (r) => {
+    if (!r.same) return esc(r.text);
+    const a = Math.max(0, r.at - 50), z = Math.min(r.text.length, r.at + r.len + 70);
+    return (a ? '…' : '') + esc(r.text.slice(a, r.at)) + '<mark>' + esc(r.text.slice(r.at, r.at + r.len)) + '</mark>' + esc(r.text.slice(r.at + r.len, z)) + (z < r.text.length ? '…' : '');
+  };
+  const multi = b.files.length > 1;
+  box.innerHTML = res.length
+    ? `<p class="sheet-note">${res.length >= 300 ? '300+' : res.length} sonuç${failed ? ` · ${failed} bölümün metni yüklenemedi` : ''}</p>
+       <div class="sr-list">${res.map((r, k) => `<button class="sr-item" data-k="${k}"><span class="sr-where">${multi ? `Bölüm ${r.i + 1} · ` : ''}${fmt(r.t)}</span><span class="sr-text">${snip(r)}</span></button>`).join('')}</div>`
+    : `<p class="sheet-note">"${esc(query)}" bulunamadı.${failed ? ` (${failed} bölümün metni yüklenemedi)` : ''}</p>`;
+  box.querySelectorAll('.sr-item').forEach((el) => el.onclick = () => {
+    const r = res[+el.dataset.k];
+    closeSheet();
+    if (!S.textMode) setTextMode(true);
+    txUserScroll = 0;
+    if (r.i === S.idx && isFinite(audio.duration)) { audio.currentTime = Math.max(0, r.t - 0.3); recordPosition(true); safePlay(); }
+    else { loadFile(r.i, Math.max(0, r.t - 0.3), true); recordPosition(true); }
+  });
 }
 
 /* =========================================================
@@ -633,6 +882,8 @@ async function refreshLibrary(manual) {
       const r = await scanLibrary();
       S.books = r.books;
       LS.set('miril.lib', S.books);
+      pruneDownloads();
+      backfillProgress();
     }
     S.libError = null;
     if (S.profile) renderLibrary();
@@ -779,6 +1030,7 @@ function goChapter(i, play = !audio.paused) {
 /* ---- oynatıcı arayüzü ---- */
 function openPlayer() {
   $('#player').classList.add('open');
+  if (S.textMode) setTimeout(() => txTick(true), 60);
   $('#player').setAttribute('aria-hidden', 'false');
   renderMini();
 }
@@ -808,6 +1060,7 @@ function renderChapter() {
   $('#p-chapter').textContent = b.files.length > 1 ? `${S.idx + 1} / ${b.files.length} · ${chapterName(b.files[S.idx], S.idx)}` : '';
   $('#btn-prev').style.visibility = $('#btn-next').style.visibility = b.files.length > 1 ? 'visible' : 'hidden';
   renderMini();
+  renderTx();
 }
 function renderPlayState() {
   const playing = !audio.paused;
@@ -985,7 +1238,7 @@ function wire() {
 
   // Aşağı kaydırarak oynatıcıyı kapat (telefon)
   let y0 = null;
-  $('#player').addEventListener('touchstart', (e) => { if ($('#player').scrollTop <= 0 && !e.target.closest('input')) y0 = e.touches[0].clientY; }, { passive: true });
+  $('#player').addEventListener('touchstart', (e) => { if ($('#player').scrollTop <= 0 && !e.target.closest('input, .tx-wrap')) y0 = e.touches[0].clientY; }, { passive: true });
   $('#player').addEventListener('touchend', (e) => { if (y0 != null && e.changedTouches[0].clientY - y0 > 110) closePlayer(); y0 = null; }, { passive: true });
 
   document.addEventListener('keydown', (e) => {
@@ -996,6 +1249,8 @@ function wire() {
     else if (e.key === 'ArrowUp' && $('#player').classList.contains('open')) { e.preventDefault(); setVol(VOL + 0.1); }
     else if (e.key === 'ArrowDown' && $('#player').classList.contains('open')) { e.preventDefault(); setVol(VOL - 0.1); }
     else if (e.key === 'Escape') { $('#sheet').classList.contains('on') ? closeSheet() : closePlayer(); }
+    else if ((e.key === 'f' && (e.ctrlKey || e.metaKey)) || e.key === '/') { if ($('#player').classList.contains('open')) { e.preventDefault(); searchSheet(); } }
+    else if (e.key === 't' && !e.ctrlKey && !e.metaKey && $('#player').classList.contains('open')) setTextMode(!S.textMode);
   });
 
   // Sekme gizlenince kaydet; geri gelince diğer cihazdaki ilerlemeyi çek.
@@ -1009,8 +1264,9 @@ function wire() {
         if (S.book && audio.paused) {
           const p = prog(S.book.id);
           const f = S.book.files[S.idx];
-          if (p && (p.fileId !== f.id || Math.abs((p.t || 0) - audio.currentTime) > 5)) {
-            const idx = Math.max(0, S.book.files.findIndex((x) => x.id === p.fileId));
+          const pi = fileIndexOf(S.book, p);
+          if (p && !p.done && (pi !== S.idx || Math.abs((p.t || 0) - audio.currentTime) > 5)) {
+            const idx = pi;
             loadFile(idx, Math.max(0, p.t - 3), false);
             toast('Diğer cihazdaki yerden devam ediyor');
           }
@@ -1023,6 +1279,23 @@ function wire() {
   window.addEventListener('beforeunload', (e) => { if (Object.keys(S.jobs).length) { e.preventDefault(); e.returnValue = ''; } });
   window.addEventListener('online', () => { toast('İnternet geri geldi'); refreshLibrary(false); pushSoon(500); });
   $('#btn-dl').onclick = () => S.book && dlSheet(S.book);
+  $('#btn-text').onclick = () => setTextMode(!S.textMode);
+  $('#btn-search').onclick = searchSheet;
+  const panel = $('#tx-panel');
+  const userScroll = () => { txUserScroll = now(); $('#tx-now').classList.remove('hidden'); };
+  panel.addEventListener('wheel', userScroll, { passive: true });
+  panel.addEventListener('touchmove', userScroll, { passive: true });
+  $('#tx-now').onclick = () => { txUserScroll = 0; const el = TXV?.segEls[TXV.seg]; if (el) txScrollTo(el, true); };
+  $('#tx-body').addEventListener('click', (e) => {
+    const w = e.target.closest('.w'), sgEl = e.target.closest('.seg');
+    if (!w || !sgEl || !TXV?.data) return;
+    const sg = TXV.data.s[+sgEl.dataset.s];
+    const word = sg[3]?.[+w.dataset.w];
+    audio.currentTime = Math.max(0, (word ? word[0] : sg[0]) - 0.15);
+    txUserScroll = 0; recordPosition(true);
+    if (audio.paused) safePlay();
+  });
+  if (LS.get('miril.textmode')) setTextMode(true);
 }
 
 /* =========================================================

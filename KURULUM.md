@@ -75,6 +75,14 @@ Apps Script kodunu değiştirirsen: Dağıt → Dağıtımları yönet → kalem
   Çok bölümlü kitapta Chrome bir kere "birden fazla dosya indirilsin mi?" diye sorabilir → İzin ver.
 - İndirme sürerken uygulamayı kapatma (ekranı kilitlemek sorun değil). Yarıda kalırsa "Devam et" kaldığı bölümden sürdürür.
 
+## Metin ve küçültme (PC aracı: Miril-Arac.zip)
+- `Miril.bat` → Drive klasöründeki yeni sesleri Opus'a küçültür (3-5 kat), sonra Whisper ile
+  zaman damgalı metin çıkarır (`01.ogg.miril.json`). Ayrıntı: aracın içindeki OKU-BENI.txt.
+- Uygulamada: oynatıcıda **Metin** → okunan kelime vurgulu akar, kelimeye dokununca oraya atlar.
+  🔍 → kitap içinde arama (Türkçe harfsiz yazsan da bulur), sonuca dokununca oradan çalar.
+  PC kısayolları: T = metin aç/kapa, Ctrl+F veya / = ara.
+- Küçültülen dosyaların kimliği değişse de kaldığın yer dosya adından bulunur.
+
 ## Notlar
 - Klasör linki ve senkron adresi repoda değil, sadece cihazların ayarlarında durur.
   Repoda sadece API anahtarı var; o da sadece senin sitende ve sadece Drive için çalışır.
