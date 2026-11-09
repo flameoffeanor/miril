@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Mırıl</title>
+<meta name="theme-color" content="#FBF3E8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1C1614" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght,SOFT@9..144,500..800,100&family=Nunito:wght@500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- Giriş -->
+<section id="v-login" class="view">
+  <div class="login">
+    <div class="logo-blob"><img src="icon.svg" alt=""></div>
+    <h1 class="app-name">Mırıl</h1>
+    <p class="tagline">Sesli kitaplarınız, kaldığınız yerden.</p>
+    <div id="login-actions"></div>
+    <p class="fine" id="login-note"></p>
+  </div>
+</section>
+
+<!-- Profil seçimi -->
+<section id="v-profiles" class="view">
+  <div class="profiles-wrap">
+    <h1 class="who">Kim dinliyor?</h1>
+    <div id="profile-grid" class="profile-grid"></div>
+    <button id="btn-edit-profiles" class="ghost-btn">Profilleri düzenle</button>
+    <button id="btn-settings2" class="link-btn">Ayarlar</button>
+  </div>
+</section>
+
+<!-- Kütüphane -->
+<section id="v-library" class="view">
+  <header class="topbar">
+    <div class="brand"><img src="icon.svg" alt=""><span class="app-name">Mırıl</span></div>
+    <div class="top-actions">
+      <button id="btn-refresh" class="icon-btn" aria-label="Kütüphaneyi yenile" title="Kütüphaneyi yenile">
+        <svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>
+      </button>
+      <button id="btn-settings" class="icon-btn" aria-label="Ayarlar" title="Ayarlar">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+      </button>
+      <button id="btn-me" class="me-btn" aria-label="Profil değiştir"></button>
+    </div>
+  </header>
+  <main class="lib-main">
+    <p class="hello" id="hello"></p>
+    <div id="continue"></div>
+    <div class="shelf-head">
+      <h2>Kitaplığın</h2>
+      <div class="filters" id="filters"></div>
+    </div>
+    <div id="grid" class="grid"></div>
+    <div id="empty" class="empty hidden"></div>
+  </main>
+</section>
+
+<!-- Mini oynatıcı -->
+<div id="mini" class="mini hidden" role="button" tabindex="0" aria-label="Oynatıcıyı aç">
+  <div class="mini-cover" id="mini-cover"></div>
+  <div class="mini-text"><b id="mini-title"></b><span id="mini-sub"></span></div>
+  <button class="mini-play" id="mini-play" aria-label="Oynat/Duraklat"></button>
+  <div class="mini-bar"><i id="mini-bar"></i></div>
+</div>
+
+<!-- Tam oynatıcı -->
+<div id="player" class="player" aria-hidden="true">
+  <div class="player-inner">
+    <div class="player-top">
+      <button class="icon-btn" id="btn-close-player" aria-label="Kapat">
+        <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+      <span class="now-label">Şimdi dinleniyor</span>
+      <button class="icon-btn" id="btn-chapters" aria-label="Bölümler">
+        <svg viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg>
+      </button>
+    </div>
+    <div class="player-cover" id="p-cover"></div>
+    <div class="player-meta">
+      <h2 id="p-title"></h2>
+      <p id="p-author"></p>
+      <p class="chapter" id="p-chapter"></p>
+    </div>
+    <div class="seek">
+      <input type="range" id="p-seek" min="0" max="1000" value="0" step="1" aria-label="Konum">
+      <div class="times"><span id="p-cur">0:00</span><span id="p-left">-0:00</span></div>
+    </div>
+    <div class="controls">
+      <button class="ctl" id="btn-prev" aria-label="Önceki bölüm"><svg viewBox="0 0 24 24"><path d="M6 5v14M19 5l-9 7 9 7z"/></svg></button>
+      <button class="ctl skip" id="btn-back" aria-label="15 saniye geri"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.5-5.8M4 3v4h4"/></svg><span>15</span></button>
+      <button class="play" id="btn-play" aria-label="Oynat"></button>
+      <button class="ctl skip" id="btn-fwd" aria-label="30 saniye ileri"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.5-5.8M20 3v4h-4"/></svg><span>30</span></button>
+      <button class="ctl" id="btn-next" aria-label="Sonraki bölüm"><svg viewBox="0 0 24 24"><path d="M18 5v14M5 5l9 7-9 7z"/></svg></button>
+    </div>
+    <p class="book-progress" id="p-book"></p>
+    <div class="chips">
+      <button class="chip" id="btn-speed">1×</button>
+      <button class="chip" id="btn-sleep"><svg viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg><span id="sleep-label">Uyku</span></button>
+      <button class="chip" id="btn-dl"><svg viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg><span id="dl-label">İndir</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- Alt sayfa (bölümler, hız, uyku, profil düzenleme) -->
+<div id="sheet-backdrop" class="sheet-backdrop"></div>
+<div id="sheet" class="sheet" role="dialog" aria-modal="true">
+  <div class="sheet-handle"></div>
+  <div id="sheet-body"></div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

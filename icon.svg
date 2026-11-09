@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="128" fill="#E8704F"/>
+  <circle cx="400" cy="110" r="70" fill="#F9D88B" opacity=".55"/>
+  <!-- kulaklık bandı -->
+  <path d="M120 300v-40a136 136 0 0 1 272 0v40" fill="none" stroke="#FFF7EF" stroke-width="36" stroke-linecap="round"/>
+  <!-- kulaklık pedleri -->
+  <rect x="92" y="282" width="84" height="132" rx="40" fill="#FFF7EF"/>
+  <rect x="336" y="282" width="84" height="132" rx="40" fill="#FFF7EF"/>
+  <!-- yüz -->
+  <circle cx="224" cy="318" r="13" fill="#2E2420"/>
+  <circle cx="288" cy="318" r="13" fill="#2E2420"/>
+  <path d="M232 358q24 22 48 0" fill="none" stroke="#2E2420" stroke-width="12" stroke-linecap="round"/>
+  <circle cx="205" cy="352" r="12" fill="#F6B8A6"/>
+  <circle cx="307" cy="352" r="12" fill="#F6B8A6"/>
+</svg>
