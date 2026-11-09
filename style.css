@@ -333,3 +333,22 @@ input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 
 .cv-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .cv-item span { position: absolute; left: 6px; bottom: 6px; font-size: 10.5px; font-weight: 800; padding: 2px 7px; border-radius: 999px; background: rgba(0,0,0,.6); color: #fff; }
 .cv-item:hover { outline: 3px solid var(--accent); }
+
+.cv-grid > p { grid-column: 1 / -1; margin: 0; }
+.cv-diag { opacity: .7; margin-top: 4px !important; }
+
+/* ---------- Dikdörtgen (kitap) kapaklar ---------- */
+.cover { aspect-ratio: 2 / 3; border-radius: 10px 16px 16px 10px; }
+.cover::after { content: ''; position: absolute; inset: 0 auto 0 0; width: 7%; background: linear-gradient(90deg, rgba(0,0,0,.18), rgba(255,255,255,.08) 60%, transparent); pointer-events: none; z-index: 2; }
+.skel { aspect-ratio: 2 / 3; }
+.cover img.cv-fg { object-fit: cover; filter: none; }
+.cover.lg .gen { font-size: 24px; }
+.continue .cover { width: 78px; }
+.mini-cover { width: 34px; }
+.mini-cover .cover { border-radius: 5px 8px 8px 5px; }
+.mini-cover .cover::after { display: none; }
+.player-cover { width: min(56vw, 250px, 30vh); margin: 14px auto 20px; }
+.player-cover .cover { border-radius: 12px 22px 22px 12px; }
+@media (min-width: 700px) { .grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); } }
+.book h4 { margin-top: 12px; }
+.cover img.cv-fg.sq { object-fit: contain; filter: drop-shadow(0 6px 14px rgba(0,0,0,.3)); }

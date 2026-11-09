@@ -240,52 +240,92 @@ function autoCover(b) { const e = CVC[bookKey(b)]; return e && e.url ? e.url : n
 const BOOKS_API = CFG.BOOKS_API || 'https://www.googleapis.com/books/v1/volumes';
 const OL_API = CFG.OL_API || 'https://openlibrary.org/search.json';
 const OL_COVERS = CFG.OL_COVERS || 'https://covers.openlibrary.org/b/id/';
-let CV_ERR = [];   // son aramadaki servis hataları (teşhis için)
+let CV_ERR = [], CV_DIAG = [];   // son aramanın hataları ve servis başına sonuç sayıları (teşhis)
+const ITUNES_API = CFG.ITUNES_API || 'https://itunes.apple.com/search';
+// Apple'ın arama servisi tarayıcıdan JSONP ile çağrılabiliyor
+function jsonp(url, ms = 8000) {
+  return new Promise((res, rej) => {
+    const cb = '__miril_cb' + uid();
+    const sc = document.createElement('script');
+    const done = (fn, v) => { delete window[cb]; sc.remove(); clearTimeout(t); fn(v); };
+    const t = setTimeout(() => done(rej, new Error('zaman aşımı')), ms);
+    window[cb] = (d) => done(res, d);
+    sc.onerror = () => done(rej, new Error('yüklenemedi'));
+    sc.src = url + (url.includes('?') ? '&' : '?') + 'callback=' + cb;
+    document.head.appendChild(sc);
+  });
+}
 async function searchCovers(b) {
   const out = [];
-  const errs = [];
+  const errs = [], diag = [];
   let okAny = false;
   const ft = fold(b.title), fa = fold(b.author || '');
   const score = (title, authors, lang) => {
     const t = fold(title || ''), a = fold(authors || '');
     let s = 0;
-    if (t === ft) s += 4; else if (t.includes(ft) || ft.includes(t)) s += 2;
+    if (t === ft) s += 4; else if (t.includes(ft) || ft.includes(t)) s += 3;
     if (fa && a.includes(fa.split(' ').pop())) s += 2;
-    if (/^(tr|tur)$/.test(lang || '')) s += 2;
+    if (/^(tr|tur|tur-tr)$/i.test(lang || '')) s += 2;
     return s;
+  };
+  const gb = async (q, extra = '') => {
+    const url = `${BOOKS_API}?q=${encodeURIComponent(q)}&maxResults=20${extra}`;
+    let r = HAS_KEY && !CFG.BOOKS_API ? await fetch(url + '&key=' + encodeURIComponent(CFG.API_KEY)).catch(() => null) : null;
+    if (!r || !r.ok) r = await fetch(url);
+    if (!r.ok) { let m = ''; try { m = (await r.json()).error?.message || ''; } catch {} throw new Error(`Google Books ${r.status}${m ? ': ' + m.slice(0, 120) : ''}`); }
+    return (await r.json()).items || [];
   };
   const jobs = [
     (async () => {
-      const q = `intitle:${b.title}` + (b.author ? ` inauthor:${b.author}` : '');
-      const url = `${BOOKS_API}?q=${encodeURIComponent(q)}&maxResults=20&printType=books`;
-      // Önce Drive anahtarıyla dene (Books API o projede açıksa kota sorunu olmaz), olmazsa anahtarsız.
-      let r = HAS_KEY && !CFG.BOOKS_API ? await fetch(url + '&key=' + encodeURIComponent(CFG.API_KEY)).catch(() => null) : null;
-      if (!r || !r.ok) r = await fetch(url);
-      if (!r.ok) { let m = ''; try { m = (await r.json()).error?.message || ''; } catch {} errs.push(`Google Books ${r.status}${m ? ': ' + m.slice(0, 120) : ''}`); return; }
-      okAny = true;
-      const j = await r.json();
-      for (const it of j.items || []) {
+      // dar arama + geniş arama (aynı kitap farklı biçimde kayıtlı olabiliyor)
+      const qs = [`intitle:"${b.title}"` + (b.author ? ` inauthor:"${b.author}"` : ''), `${b.title} ${b.author || ''}`.trim()];
+      const res = await Promise.allSettled([gb(qs[0]), gb(qs[1], '&langRestrict=tr')]);
+      const items = res.flatMap((r) => (r.status === 'fulfilled' ? r.value : []));
+      res.filter((r) => r.status === 'rejected').forEach((r) => errs.push(r.reason.message));
+      if (res.some((r) => r.status === 'fulfilled')) okAny = true;
+      let withImg = 0;
+      for (const it of items) {
         const v = it.volumeInfo || {}, il = v.imageLinks;
         if (!il) continue;
+        withImg++;
         const url = (il.thumbnail || il.smallThumbnail).replace(/^http:\/\/books\.google/, 'https://books.google').replace('&edge=curl', '');
-        out.push({ url, title: v.title, by: (v.authors || []).join(', '), src: 'Google Books', s: score(v.title, (v.authors || []).join(' '), v.language) });
+        out.push({ url, title: v.title, by: (v.authors || []).join(', '), src: 'Google', s: score(v.title, (v.authors || []).join(' '), v.language) });
       }
+      diag.push(`Google ${items.length} sonuç / ${withImg} kapaklı`);
     })(),
     (async () => {
-      const p = new URLSearchParams({ title: b.title, limit: '12', fields: 'title,author_name,cover_i,language' });
-      if (b.author) p.set('author', b.author);
+      const p = new URLSearchParams({ q: `${b.title} ${b.author || ''}`.trim(), limit: '15', fields: 'title,author_name,cover_i,language' });
       const r = await fetch(`${OL_API}?${p}`);
       if (!r.ok) { errs.push(`Open Library ${r.status}`); return; }
       okAny = true;
-      const j = await r.json();
-      for (const d of j.docs || []) {
+      const docs = (await r.json()).docs || [];
+      let n = 0;
+      for (const d of docs) {
         if (!d.cover_i) continue;
-        out.push({ url: `${OL_COVERS}${d.cover_i}-L.jpg`, title: d.title, by: (d.author_name || []).join(', '), src: 'Open Library', s: score(d.title, (d.author_name || []).join(' '), (d.language || []).includes('tur') ? 'tur' : '') + 0.5 });
+        n++;
+        out.push({ url: `${OL_COVERS}${d.cover_i}-L.jpg`, title: d.title, by: (d.author_name || []).join(', '), src: 'OpenLib', s: score(d.title, (d.author_name || []).join(' '), (d.language || []).includes('tur') ? 'tur' : '') + 0.5 });
       }
+      diag.push(`Open Library ${docs.length} / ${n} kapaklı`);
+    })(),
+    (async () => {
+      // Apple Books: sesli kitap (kare kapak) + e-kitap, Türkiye mağazası
+      const term = encodeURIComponent(`${b.title} ${b.author || ''}`.trim());
+      const res = await Promise.allSettled(['audiobook', 'ebook'].map((m) => jsonp(`${ITUNES_API}?term=${term}&country=tr&media=${m}&limit=10`)));
+      const rows = res.flatMap((r) => (r.status === 'fulfilled' ? r.value.results || [] : []));
+      if (res.some((r) => r.status === 'fulfilled')) okAny = true; else errs.push('Apple: ' + res[0].reason?.message);
+      let n = 0;
+      for (const d of rows) {
+        const art = d.artworkUrl100 || d.artworkUrl60;
+        if (!art) continue;
+        n++;
+        const title = d.collectionName || d.trackName || '';
+        out.push({ url: art.replace(/\/\d+x\d+(bb)?\.(jpg|png)$/, '/600x600bb.jpg'), title, by: d.artistName || '', src: 'Apple', s: score(title, d.artistName, 'tr') + (d.kind === 'ebook' ? 0.6 : -0.5), sq: d.kind !== 'ebook' });
+      }
+      diag.push(`Apple ${rows.length} / ${n} kapaklı`);
     })(),
   ];
   await Promise.all(jobs.map((p) => p.catch((e) => { errs.push('Bağlantı: ' + (e.message || e)); })));
-  CV_ERR = errs;
+  CV_ERR = errs; CV_DIAG = diag;
   if (!okAny) { const e = new Error(errs.join(' · ') || 'kapak servislerine ulaşılamadı'); e.cv = true; throw e; }
   const seen = new Set();
   return out.filter((c) => !seen.has(c.url) && seen.add(c.url)).sort((x, y) => y.s - x.s);
@@ -336,8 +376,8 @@ function coverSheet() {
     const g = $('#cv-grid');
     if (!g) return;
     g.innerHTML = list.length
-      ? list.slice(0, 12).map((c, k) => `<button class="cv-item" data-k="${k}" title="${esc(c.title)} — ${esc(c.by)} (${c.src})"><img src="${esc(c.url)}" alt="" loading="lazy" onerror="this.closest('.cv-item').remove()"><span>${esc(c.src === 'Google Books' ? 'Google' : 'OpenLib')}</span></button>`).join('')
-      : `<p class="sheet-note">${navigator.onLine ? 'İnternette kapak bulunamadı.' : 'İnternet yok.'}${CV_ERR.length ? ' (' + esc(CV_ERR.join(' · ')) + ')' : ''} Drive'da kitap klasörüne "kapak.jpg" koyabilirsin.</p>`;
+      ? list.slice(0, 15).map((c, k) => `<button class="cv-item" data-k="${k}" title="${esc(c.title)} — ${esc(c.by)} (${c.src})"><img src="${esc(c.url)}" alt="" loading="lazy" onerror="this.closest('.cv-item').remove()"><span>${esc(c.src)}</span></button>`).join('') + `<p class="sheet-note small cv-diag">${esc(CV_DIAG.join(' · '))}</p>`
+      : `<p class="sheet-note">${navigator.onLine ? 'İnternette kapak bulunamadı.' : 'İnternet yok.'} Drive'da kitap klasörüne "kapak.jpg" koyabilirsin.</p><p class="sheet-note small cv-diag">${esc([...CV_DIAG, ...CV_ERR].join(' · '))}</p>`;
     g.querySelectorAll('.cv-item').forEach((el) => el.onclick = () => set(list[+el.dataset.k].url));
   });
 }
@@ -1082,7 +1122,7 @@ async function runSearch(b, query) {
    ========================================================= */
 function coverHTML(b, size = 'md') {
   const src = coverSrc(b);
-  const img = src ? `<img class="cv-bg" src="${esc(src)}" alt="" loading="lazy" onerror="this.remove()"><img class="cv-fg" src="${esc(src)}" alt="" loading="lazy" onerror="this.remove()">` : '';
+  const img = src ? `<img class="cv-bg" src="${esc(src)}" alt="" loading="lazy" onerror="this.remove()"><img class="cv-fg" src="${esc(src)}" alt="" loading="lazy" onerror="this.remove()" onload="if(this.naturalWidth/this.naturalHeight>.8)this.classList.add('sq')">` : '';
   const [c1, c2] = COVER_PAIRS[hash(b.title + b.author) % COVER_PAIRS.length];
   const hsh = hash(b.title);
   const dots = [0, 1, 2].map((i) => {

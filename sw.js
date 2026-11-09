@@ -31,7 +31,7 @@ self.addEventListener('fetch', (e) => {
     return; // diğer her şey (API vb.) önbelleğe dokunmadan geçer
   }
   // Kitap kapakları (Google Books / Open Library): bir kere indir, sonra internetsiz de görünsün
-  if (/(^|\.)books\.google\.com$|^books\.googleusercontent\.com$|^covers\.openlibrary\.org$|\.archive\.org$/.test(u.hostname)) {
+  if (/(^|\.)books\.google\.com$|^books\.googleusercontent\.com$|^covers\.openlibrary\.org$|\.archive\.org$|\.mzstatic\.com$/.test(u.hostname)) {
     return e.respondWith(cacheFirst(req, 'miril-cover-v1'));
   }
   if (u.hostname === 'fonts.googleapis.com' || u.hostname === 'fonts.gstatic.com') {
