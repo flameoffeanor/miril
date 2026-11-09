@@ -83,6 +83,11 @@ Apps Script kodunu değiştirirsen: Dağıt → Dağıtımları yönet → kalem
   PC kısayolları: T = metin aç/kapa, Ctrl+F veya / = ara.
 - Küçültülen dosyaların kimliği değişse de kaldığın yer dosya adından bulunur.
 
+## Ayraçlar ve notlar
+- Oynatıcıda **Ayraç** → "Buraya ayraç ekle", istersen not yaz. Metin modundaysan o anki cümle alıntı olarak eklenir.
+- Ayraçlar profile özel ve senkronlu (Evren'inkiler ayrı). Kitap klasörüne değil, özel senkron dosyasına kaydedilir.
+- PC kısayolu: **B** = ayraç ekle.
+
 ## Notlar
 - Klasör linki ve senkron adresi repoda değil, sadece cihazların ayarlarında durur.
   Repoda sadece API anahtarı var; o da sadece senin sitende ve sadece Drive için çalışır.

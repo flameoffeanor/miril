@@ -492,10 +492,119 @@ function prog(bid, pid = S.profile?.id) {
   if (!b) return null;
   const key = bookKey(b);
   for (const [k, v] of Object.entries(all)) {
+    if (k.startsWith(MK)) continue;
     if (v.nm === key && !S.books.some((x) => x.id === k)) { all[bid] = v; return v; }
   }
   return null;
 }
+/* ---- Ayraçlar ve notlar ----
+   Senkron dosyasında, profilin ilerleme kayıtlarının yanında "m:<id>" anahtarıyla durur
+   (sunucu her kaydı ayrı birleştirdiği için Apps Script'i değiştirmeye gerek yok). */
+const MK = 'm:';
+function marksOf(b, pid = S.profile?.id) {
+  const all = S.sync.progress[pid] || {};
+  const key = bookKey(b);
+  return Object.entries(all)
+    .filter(([k, v]) => k.startsWith(MK) && !v.deleted && (v.bid === b.id || v.nm === key))
+    .map(([, v]) => ({ ...v, idx: fileIndexOf(b, v) }))
+    .sort((a, c) => a.idx - c.idx || a.t - c.t);
+}
+function saveMark(m) {
+  S.sync.progress[S.profile.id] ||= {};
+  S.sync.progress[S.profile.id][MK + m.id] = { ...m, at: now() };
+  saveLocal(); pushSoon(300);
+  applyMarksToTx();
+}
+function deleteMark(id) {
+  const all = S.sync.progress[S.profile.id] || {};
+  if (all[MK + id]) all[MK + id] = { id, deleted: true, at: now() };
+  saveLocal(); pushSoon(300);
+  applyMarksToTx();
+}
+function currentQuote() {
+  if (!TXV?.data || TXV.fileId !== S.book.files[S.idx]?.id) return '';
+  const sg = TXV.data.s[TXV.seg];
+  return sg ? sg[2] : '';
+}
+function bookTime(b, i, t) {
+  const durs = b.files.slice(0, i).map((f) => S.sync.durations[f.id] || 0);
+  return durs.every((d) => d > 0) ? fmt(durs.reduce((x, y) => x + y, 0) + t) : (b.files.length > 1 ? `${i + 1}·${fmt(t)}` : fmt(t));
+}
+function chapterTitleAt(b, i, t) {
+  const ch = chaptersOf(b);
+  if (!ch) return b.files.length > 1 ? chapterName(b.files[i], i) : '';
+  let ans = null;
+  for (const c of ch) { if (c.i < i || (c.i === i && c.t <= t + 0.5)) ans = c; else break; }
+  return ans ? ans.title : '';
+}
+// Ayraç ekle / düzenle sayfası
+function markEditSheet(existing) {
+  const b = S.book;
+  const f = b.files[S.idx];
+  const m = existing || {
+    id: uid() + uid(), bid: b.id, nm: bookKey(b), fileId: f.id, fn: stem(f.name), i: S.idx,
+    t: Math.max(0, Math.floor((audio.currentTime || 0) - 2)), q: currentQuote(), note: '', created: now(),
+  };
+  const idx = existing ? fileIndexOf(b, m) : S.idx;
+  const where = [bookTime(b, idx, m.t), chapterTitleAt(b, idx, m.t)].filter(Boolean).join(' · ');
+  openSheet(`<h3>${existing ? 'Ayracı düzenle' : 'Ayraç ekle'}</h3>
+    <p class="mark-where">🔖 ${esc(where)}</p>
+    ${m.q ? `<blockquote class="mark-q">${esc(m.q)}</blockquote>` : ''}
+    <label class="field"><span>Not (isteğe bağlı)</span><textarea id="mk-note" rows="4" maxlength="2000" placeholder="Aklına geleni yaz…">${esc(m.note || '')}</textarea></label>
+    <div class="row-btns"><button class="big-btn" id="mk-save">Kaydet</button></div>
+    ${existing ? '<button class="danger" id="mk-del">Ayracı sil</button>' : ''}`);
+  const ta = $('#mk-note');
+  setTimeout(() => ta.focus(), 350);
+  $('#mk-save').onclick = () => {
+    saveMark({ ...m, note: ta.value.trim() });
+    closeSheet();
+    toast(existing ? 'Ayraç güncellendi' : 'Ayraç eklendi 🔖');
+  };
+  ta.onkeydown = (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) $('#mk-save').click(); };
+  if (existing) $('#mk-del').onclick = () => { if (confirm('Bu ayraç silinsin mi?')) { deleteMark(m.id); marksSheet(); toast('Ayraç silindi'); } };
+}
+// Ayraç listesi
+function marksSheet() {
+  const b = S.book;
+  const list = marksOf(b);
+  openSheet(`<h3>Ayraçlar ve notlar</h3>
+    <button class="big-btn add-mark" id="mk-add"><svg viewBox="0 0 24 24"><path d="M6 3h12v18l-6-4-6 4z"/></svg>Buraya ayraç ekle <small>${esc(fmt(audio.currentTime || 0))}</small></button>
+    ${list.length ? `<div class="mark-list">${list.map((m) => `
+      <div class="mark-item" data-id="${m.id}">
+        <button class="mark-go" data-go="${m.id}">
+          <span class="mark-when">${esc(bookTime(b, m.idx, m.t))}${chapterTitleAt(b, m.idx, m.t) ? ' · ' + esc(chapterTitleAt(b, m.idx, m.t)) : ''}</span>
+          ${m.q ? `<span class="mark-qs">“${esc(m.q.length > 140 ? m.q.slice(0, 140) + '…' : m.q)}”</span>` : ''}
+          ${m.note ? `<span class="mark-note">${esc(m.note)}</span>` : ''}
+        </button>
+        <button class="icon-btn" data-edit="${m.id}" aria-label="Düzenle"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg></button>
+      </div>`).join('')}</div>`
+      : '<p class="sheet-note" style="margin-top:14px">Henüz ayraç yok. Dinlerken önemli bir yerde ekle, istersen not yaz.</p>'}`);
+  $('#mk-add').onclick = () => markEditSheet(null);
+  document.querySelectorAll('[data-go]').forEach((el) => el.onclick = () => {
+    const m = list.find((x) => x.id === el.dataset.go);
+    closeSheet();
+    seekToPos(m.idx, m.t);
+    if (audio.paused) safePlay();
+  });
+  document.querySelectorAll('[data-edit]').forEach((el) => el.onclick = () => markEditSheet(list.find((x) => x.id === el.dataset.edit)));
+}
+function renderMarkChip() {
+  const n = S.book && S.profile ? marksOf(S.book).length : 0;
+  $('#mark-label').textContent = n ? `Ayraç · ${n}` : 'Ayraç';
+}
+// Metin modunda ayraçlı cümleleri işaretle
+function applyMarksToTx() {
+  renderMarkChip();
+  if (!TXV?.data || !S.book) return;
+  TXV.segEls.forEach((el) => el.classList.remove('marked'));
+  const f = S.book.files[S.idx];
+  for (const m of marksOf(S.book)) {
+    if (m.idx !== S.idx || TXV.fileId !== f.id) continue;
+    const si = bsearch(TXV.data.s, m.t + 2.1, (x) => x[0]);
+    TXV.segEls[si]?.classList.add('marked');
+  }
+}
+
 function fileIndexOf(b, p) {
   if (!p) return 0;
   let i = b.files.findIndex((f) => f.id === p.fileId);
@@ -612,6 +721,7 @@ async function renderTx() {
     html += `<span class="seg" data-s="${i}">${words.map((w, j) => `<span class="w" data-w="${j}">${esc(w[2])}</span>`).join('')}</span>`;
   });
   body.innerHTML = html + '</p>';
+  setTimeout(applyMarksToTx, 0);
   TXV.segEls = [...body.querySelectorAll('.seg')];
   TXV.seg = -1;
   txTick(true);
@@ -1263,6 +1373,7 @@ function renderChapter() {
   S.curCh = null;
   renderChapterLabel();
   loadChapters(b);
+  renderMarkChip();
   renderMini();
   renderTx();
 }
@@ -1476,6 +1587,7 @@ function wire() {
     else if (e.key === 'Escape') { $('#sheet').classList.contains('on') ? closeSheet() : closePlayer(); }
     else if ((e.key === 'f' && (e.ctrlKey || e.metaKey)) || e.key === '/') { if ($('#player').classList.contains('open')) { e.preventDefault(); searchSheet(); } }
     else if (e.key === 't' && !e.ctrlKey && !e.metaKey && $('#player').classList.contains('open')) setTextMode(!S.textMode);
+    else if (e.key === 'b' && !e.ctrlKey && !e.metaKey && $('#player').classList.contains('open')) { e.preventDefault(); markEditSheet(null); }
   });
 
   // Sekme gizlenince kaydet; geri gelince diğer cihazdaki ilerlemeyi çek.
@@ -1491,6 +1603,7 @@ function wire() {
   window.addEventListener('online', () => { toast('İnternet geri geldi'); refreshLibrary(false); pushSoon(500); });
   $('#btn-dl').onclick = () => S.book && dlSheet(S.book);
   $('#btn-text').onclick = () => setTextMode(!S.textMode);
+  $('#btn-mark').onclick = () => S.book && marksSheet();
   $('#btn-search').onclick = searchSheet;
   const panel = $('#tx-panel');
   const userScroll = () => { txUserScroll = now(); $('#tx-now').classList.remove('hidden'); };

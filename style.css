@@ -302,3 +302,22 @@ input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 
 .sr-text mark { background: var(--accent-soft); color: inherit; border-radius: 4px; padding: 0 2px; }
 
 .link-btn.inline { margin: 0; font-size: inherit; color: var(--accent); }
+
+/* ---------- Ayraçlar ---------- */
+.add-mark { width: 100%; justify-content: center; }
+.add-mark svg { width: 18px; height: 18px; }
+.add-mark small { opacity: .75; font-weight: 700; font-variant-numeric: tabular-nums; }
+.mark-list { display: flex; flex-direction: column; gap: 4px; margin-top: 14px; }
+.mark-item { display: flex; align-items: flex-start; gap: 4px; border-radius: 16px; }
+.mark-item:hover { background: var(--bg2); }
+.mark-go { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; text-align: left; padding: 12px 6px 12px 14px; }
+.mark-when { font-size: 12px; font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; }
+.mark-qs { font-family: var(--display); font-size: 15.5px; line-height: 1.45; color: var(--ink2); font-style: italic; }
+.mark-note { font-size: 15px; line-height: 1.45; color: var(--ink); white-space: pre-wrap; word-break: break-word; }
+.mark-item .icon-btn { margin-top: 6px; flex: none; }
+.mark-where { margin: -4px 0 12px; font-weight: 800; color: var(--accent); font-size: 14px; }
+.mark-q { margin: 0 0 16px; padding: 10px 14px; border-left: 3px solid var(--accent); background: var(--bg2); border-radius: 0 12px 12px 0; font-family: var(--display); font-style: italic; color: var(--ink2); line-height: 1.5; }
+.field textarea { width: 100%; font: inherit; font-size: 16px; line-height: 1.5; padding: 12px 14px; border-radius: 16px; border: 2px solid var(--line); background: var(--bg); color: var(--ink); outline: none; resize: vertical; }
+.field textarea:focus { border-color: var(--accent); }
+.tx-body .seg.marked { text-decoration: underline; text-decoration-color: var(--accent); text-decoration-thickness: 2px; text-underline-offset: 5px; }
+.tx-body .seg.marked::before { content: '🔖'; font-size: .7em; margin-right: 3px; text-decoration: none; display: inline-block; }
