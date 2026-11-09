@@ -6,7 +6,7 @@
      (apps-script.gs) tutulur. PC ↔ telefon böyle eşitlenir.
    - Klasör linki ve senkron adresi repoda değil, cihazın ayarlarında durur. */
 
-const APP_VERSION = '2026.11.09-9';
+const APP_VERSION = '2026.11.09-11';
 const CFG = window.MIRIL_CONFIG || {};
 const DRIVE = CFG.DRIVE_API || 'https://www.googleapis.com/drive/v3/';
 const HAS_KEY = !!CFG.API_KEY && !CFG.API_KEY.startsWith('BURAYA');
@@ -891,7 +891,11 @@ async function renderTx() {
   body.innerHTML = '<div class="tx-msg"><p>Metin yükleniyor…</p></div>';
   let d;
   try { d = await loadTx(f); } catch (e) {
-    if (TXV?.fileId === f.id) body.innerHTML = `<div class="tx-msg"><p>Metin yüklenemedi${navigator.onLine ? '' : ' (internet yok, bu kitap indirilmemiş)'}.</p></div>`;
+    if (TXV?.fileId === f.id) {
+      body.innerHTML = `<div class="tx-msg"><p>Metin yüklenemedi${navigator.onLine ? '' : ' (internet yok, bu kitap indirilmemiş)'}.</p><p><button class="big-btn alt" id="tx-retry">Tekrar dene</button></p></div>`;
+      TXV = null;   // bir sonraki çizimde yeniden denesin
+      $('#tx-retry').onclick = () => renderTx();
+    }
     return;
   }
   if (TXV?.fileId !== f.id) return;
@@ -1394,6 +1398,7 @@ function loadFile(idx, t, play) {
   const f = S.book.files[idx];
   S.idx = idx;
   S.pendingSeek = t || 0;
+  S.lastPos = t || 0;
   $('#btn-play').classList.add('loading');
   audio.src = fileSrc(f);
   audio.playbackRate = prefs().speed || 1;
@@ -1437,6 +1442,12 @@ function catchUp(play) {
 
 async function safePlay() {
   S.wantPlay = true;
+  // Oynatıcı önceki bir hatada takılı kaldıysa play() hiçbir istek atmaz: dosyayı yeni bir adresle baştan yükle
+  if (S.book && (audio.error || !audio.src)) {
+    const f = S.book.files[S.idx];
+    if (f) BUST[f.id] = (BUST[f.id] || 0) + 1;
+    loadFile(S.idx, S.pendingSeek ?? S.lastPos ?? 0, false);
+  }
   // Oynat'a basınca önce diğer cihaza bak (pencere hep açık kalsa bile doğru yerden başlasın).
   if (audio.paused && now() - lastPull > 4000 && await catchUp(true)) return;
   try { await audio.play(); } catch (e) { if (e.name !== 'AbortError') console.warn(e); }
@@ -1449,6 +1460,7 @@ function recordPosition(force) {
   if (!f) return;
   if (!force && now() - S.lastLocalSave < 3000) return;
   if (!force && !S.touched) return;   // sadece açılıp bakıldıysa kayıt oluşturma
+  if (audio.error || !audio.src) return;   // oynatıcı hatada/boşken konum güvenilmez
   S.touched = true;
   setProg(S.book.id, { fileId: f.id, t: Math.floor(audio.currentTime || S.pendingSeek || 0) });
   saveLocal();
@@ -1470,7 +1482,8 @@ audio.addEventListener('waiting', () => $('#btn-play').classList.add('loading'))
 audio.addEventListener('playing', () => $('#btn-play').classList.remove('loading'));
 audio.addEventListener('play', () => { S.touched = true; audio.playbackRate = prefs().speed || 1; renderPlayState(); });
 audio.addEventListener('pause', () => { renderPlayState(); recordPosition(true); });
-audio.addEventListener('timeupdate', () => { renderChapterLabel(); renderTime(); recordPosition(false); checkSleep(); });
+audio.addEventListener('timeupdate', () => {
+  if (!audio.error && !audio.seeking && audio.readyState >= 2 && S.pendingSeek == null) S.lastPos = audio.currentTime; renderChapterLabel(); renderTime(); recordPosition(false); checkSleep(); });
 audio.addEventListener('ended', () => {
   if (S.sleepChapter) { clearSleep(); recordPosition(true); toast('Bölüm bitti, iyi uykular 🌙'); return; }
   if (S.idx < S.book.files.length - 1) loadFile(S.idx + 1, 0, true);
@@ -1490,8 +1503,7 @@ audio.addEventListener('error', async () => {
   if (f && !f.demo && !(S.dl.has(f.id) && swOn()) && (BUST[f.id] || 0) < 2) {
     BUST[f.id] = (BUST[f.id] || 0) + 1;
     console.warn('oynatma hatası, önbellek atlanarak tekrar deneniyor', f.name, audio.error?.message);
-    const t = S.pendingSeek ?? audio.currentTime ?? 0;
-    loadFile(S.idx, t, !!S.wantPlay);   // kullanıcı oynat'a basmadıysa yine çalmasın
+    loadFile(S.idx, S.pendingSeek ?? S.lastPos ?? 0, !!S.wantPlay);   // kullanıcı oynat'a basmadıysa yine çalmasın
     return;
   }
   // Dosya Drive'da değişmiş olabilir (ör. araç küçülttü → yeni kimlik). Kütüphaneyi yenileyip aynı yerden dene.
@@ -1639,7 +1651,7 @@ function updateMediaSession() {
   const ms = navigator.mediaSession;
   const set = (a, f) => { try { ms.setActionHandler(a, f); } catch {} };
   set('play', () => safePlay());
-  set('pause', () => audio.pause());
+  set('pause', () => { S.wantPlay = false; audio.pause(); });
   set('seekbackward', (d) => seekBy(-(d.seekOffset || 15)));
   set('seekforward', (d) => seekBy(d.seekOffset || 30));
   set('previoustrack', () => jumpChapter(-1));
@@ -1684,7 +1696,7 @@ function checkSleep() {
   const left = S.sleepEnd - now();
   renderSleep();
   if (left <= 10000 && left > 0) audio.volume = VOL * Math.max(0.05, left / 10000);
-  if (left <= 0) { audio.pause(); seekBy(-10); clearSleep(); }
+  if (left <= 0) { S.wantPlay = false; audio.pause(); seekBy(-10); clearSleep(); }
 }
 function renderSleep() {
   const on = S.sleepEnd || S.sleepChapter;
@@ -1829,8 +1841,17 @@ function wire() {
 
   // Sekme gizlenince kaydet; geri gelince diğer cihazdaki ilerlemeyi çek.
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') { recordPosition(true); pushOnExit(); return; }
-    catchUp(false);
+    if (document.visibilityState === 'hidden') {
+      recordPosition(true); pushOnExit();
+      if (S.book && audio.paused && audio.src && !audio.src.includes('/offline/') && !audio.src.startsWith('blob:')) {
+        S.lastPos = S.pendingSeek ?? audio.currentTime ?? S.lastPos ?? 0;
+        audio.removeAttribute('src'); audio.load();   // Chrome askıya alınmış oynatıcıyı geri açarken hata verebiliyor
+      }
+      return;
+    }
+    catchUp(false).then((jumped) => {
+      if (!jumped && S.book && !audio.src) loadFile(S.idx, S.lastPos ?? 0, false);
+    });
   });
   // Pencere açık kalsa bile: odağa gelince ve duraklatılmışken 20 sn'de bir diğer cihazı kontrol et.
   window.addEventListener('focus', () => { if (now() - lastPull > 3000) catchUp(false); });
