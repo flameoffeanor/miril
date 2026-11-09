@@ -1166,7 +1166,21 @@ audio.addEventListener('error', async () => {
     const nf = S.book?.files[S.idx];
     if (nf && nf.id !== f.id) { loadFile(S.idx, t, true); return; }
   }
-  toast('Dosya çalınamadı. Drive yüklemesi sürüyor olabilir, biraz sonra tekrar dene.', 'Tekrar dene', () => { retried.clear(); reloadCurrent(true); }, 8000);
+  // Teşhis: Drive gerçekte ne diyor?
+  const code = audio.error?.code;   // 1 iptal, 2 ağ, 3 çözme, 4 desteklenmiyor
+  let why = '';
+  if (f && !f.demo) {
+    try {
+      const r = await fetch(S.dl.has(f.id) && swOn() ? 'offline/' + f.id : mediaUrl(f.id), { headers: { Range: 'bytes=0-1' } });
+      if (!r.ok) {
+        let m = '';
+        try { m = (await r.json()).error?.message || ''; } catch {}
+        why = `Drive ${r.status}${m ? ': ' + m : ''}`;
+      } else why = `Drive 200 (${r.headers.get('Content-Type') || '?'}), oynatıcı hata kodu ${code}`;
+    } catch (e) { why = 'Bağlantı hatası: ' + (e.message || e); }
+  }
+  console.warn('oynatma hatası', f?.name, code, why);
+  toast(`Dosya çalınamadı. ${why || 'Biraz sonra tekrar dene.'}`, 'Tekrar dene', () => { retried.clear(); reloadCurrent(true); }, 15000);
 });
 
 function seekBy(d) {
