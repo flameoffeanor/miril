@@ -352,3 +352,7 @@ input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 
 @media (min-width: 700px) { .grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); } }
 .book h4 { margin-top: 12px; }
 .cover img.cv-fg.sq { object-fit: contain; filter: drop-shadow(0 6px 14px rgba(0,0,0,.3)); }
+.cv-url { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.cv-url .field { margin-bottom: 10px; }
+.cv-url .big-btn { width: 100%; justify-content: center; }
+.cv-url .field input { font-size: 14px; }

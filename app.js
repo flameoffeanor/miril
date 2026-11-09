@@ -360,6 +360,12 @@ function coverSheet() {
   openSheet(`<h3>Kapak</h3>
     <p class="sheet-note small" style="margin:-6px 0 12px">${o ? 'Elle seçilmiş kapak kullanılıyor.' : b.cover ? "Drive'daki kapak resmi kullanılıyor." : autoCover(b) ? 'İnternetten otomatik bulundu.' : 'Kapak bulunamadı, renkli kapak gösteriliyor.'}</p>
     <div class="cv-grid" id="cv-grid"><p class="sheet-note">Aranıyor…</p></div>
+    <div class="cv-url">
+      <label class="field"><span>Ya da görsel linki yapıştır</span>
+        <input id="cv-link" inputmode="url" autocomplete="off" placeholder="https://…jpg  (resme sağ tık → Resim adresini kopyala)"></label>
+      <button class="big-btn alt" id="cv-use">Bu görseli kullan</button>
+      <p class="sheet-note small" id="cv-msg"></p>
+    </div>
     <div class="opt-list" style="margin-top:12px">
       ${b.cover ? `<button class="opt" data-cv="drive">Drive'daki kapak resmini kullan</button>` : ''}
       <button class="opt" data-cv="none">Renkli kapak kullan</button>
@@ -371,6 +377,19 @@ function coverSheet() {
     saveLocal(); pushSoon(300); closeSheet(); refreshCovers(b);
   };
   document.querySelectorAll('[data-cv]').forEach((el) => el.onclick = () => set(el.dataset.cv));
+  $('#cv-use').onclick = () => {
+    const raw = $('#cv-link').value.trim();
+    const u = /^http:\/\/(localhost|127\.)/.test(raw) ? raw : raw.replace(/^http:/, 'https:');   // site https olduğu için
+    const msg = $('#cv-msg');
+    if (!/^https?:\/\/\S+$/i.test(u)) { msg.textContent = 'Geçerli bir resim linki yapıştır (https:// ile başlayan).'; return; }
+    msg.textContent = 'Kontrol ediliyor…';
+    const im = new Image();
+    const t = setTimeout(() => { im.src = ''; msg.textContent = 'Resim yüklenemedi (zaman aşımı). Başka bir link dene.'; }, 10000);
+    im.onload = () => { clearTimeout(t); if (im.naturalWidth < 40) { msg.textContent = 'Bu bir resim gibi görünmüyor.'; return; } set(u); toast('Kapak kaydedildi'); };
+    im.onerror = () => { clearTimeout(t); msg.textContent = 'Bu link resim olarak açılamadı. Sayfa linki değil, resmin kendi linki olmalı (sağ tık → Resim adresini kopyala).'; };
+    im.src = u;
+  };
+  $('#cv-link').onkeydown = (e) => { if (e.key === 'Enter') $('#cv-use').click(); };
   searchCovers(b).catch((e) => { const g = $('#cv-grid'); if (g) g.innerHTML = `<p class="sheet-note">Kapak aranamadı: ${esc(e.message)}</p>`; return null; }).then((list) => {
     if (!list) return;
     const g = $('#cv-grid');
