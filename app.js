@@ -6,7 +6,7 @@
      (apps-script.gs) tutulur. PC ↔ telefon böyle eşitlenir.
    - Klasör linki ve senkron adresi repoda değil, cihazın ayarlarında durur. */
 
-const APP_VERSION = '2026.11.09-6';
+const APP_VERSION = '2026.11.09-7';
 const CFG = window.MIRIL_CONFIG || {};
 const DRIVE = CFG.DRIVE_API || 'https://www.googleapis.com/drive/v3/';
 const HAS_KEY = !!CFG.API_KEY && !CFG.API_KEY.startsWith('BURAYA');
@@ -1489,18 +1489,22 @@ audio.addEventListener('error', async () => {
     const nf = S.book?.files[S.idx];
     if (nf && nf.id !== f.id) { loadFile(S.idx, t, true); return; }
   }
-  // Teşhis: Drive gerçekte ne diyor?
+  // Teşhis: oynatıcının kendi hata mesajı + Drive'ın dosya hakkında cevabı
   const code = audio.error?.code;   // 1 iptal, 2 ağ, 3 çözme, 4 desteklenmiyor
-  let why = '';
-  if (f && !f.demo) {
+  const pmsg = (audio.error?.message || '').slice(0, 120);
+  let why = `Oynatıcı: kod ${code}${pmsg ? ' (' + pmsg + ')' : ''}`;
+  if (f && !f.demo && !(S.dl.has(f.id) && swOn())) {
     try {
-      const r = await fetch(S.dl.has(f.id) && swOn() ? 'offline/' + f.id : mediaUrl(f.id), { headers: { Range: 'bytes=0-1' } });
+      const r = await fetch(`${DRIVE}files/${f.id}?fields=id,size,mimeType&key=${encodeURIComponent(CFG.API_KEY)}`);
       if (!r.ok) {
         let m = '';
         try { m = (await r.json()).error?.message || ''; } catch {}
-        why = `Drive ${r.status}${m ? ': ' + m : ''}`;
-      } else why = `Drive 200 (${r.headers.get('Content-Type') || '?'}), oynatıcı hata kodu ${code}`;
-    } catch (e) { why = 'Bağlantı hatası: ' + (e.message || e); }
+        why += ` · Drive ${r.status}${m ? ': ' + m.slice(0, 140) : ''}`;
+      } else {
+        const j = await r.json();
+        why += ` · Drive dosyayı görüyor (${Math.round((+j.size || 0) / 1e6)} MB, ${j.mimeType})`;
+      }
+    } catch (e) { why += ' · Drive bağlantı hatası: ' + (e.message || e); }
   }
   console.warn('oynatma hatası', f?.name, code, why);
   toast(`Dosya çalınamadı. ${why || 'Biraz sonra tekrar dene.'}`, 'Tekrar dene', () => { retried.clear(); reloadCurrent(true); }, 15000);
