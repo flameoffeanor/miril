@@ -6,7 +6,7 @@
      (apps-script.gs) tutulur. PC ↔ telefon böyle eşitlenir.
    - Klasör linki ve senkron adresi repoda değil, cihazın ayarlarında durur. */
 
-const APP_VERSION = '2026.11.09-12';
+const APP_VERSION = '2026.11.10-13';
 const CFG = window.MIRIL_CONFIG || {};
 const DRIVE = CFG.DRIVE_API || 'https://www.googleapis.com/drive/v3/';
 const HAS_KEY = !!CFG.API_KEY && !CFG.API_KEY.startsWith('BURAYA');
@@ -871,8 +871,29 @@ async function loadTx(f) {
 }
 
 let TXV = null; // görünen metin: { fileId, data, segEls, seg, word }
+// Metin akarken ekran kapanmasın: metin modu açık + çalıyor + oynatıcı ekranda iken ekranı uyanık tut.
+let wakeLock = null, wakeBusy = false;
+async function syncWakeLock() {
+  if (!('wakeLock' in navigator) || wakeBusy) return;
+  const want = !!S.textMode && !audio.paused && document.visibilityState === 'visible' && $('#player').classList.contains('open');
+  wakeBusy = true;
+  try {
+    if (want && !wakeLock) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });   // sistem bırakırsa (sekme gizlenince) haberimiz olsun
+    } else if (!want && wakeLock) {
+      const w = wakeLock; wakeLock = null;
+      await w.release();
+    }
+  } catch (e) { console.warn('wake lock', e.message); }
+  wakeBusy = false;
+  // biz beklerken durum değiştiyse bir kez daha bak
+  const again = !!S.textMode && !audio.paused && document.visibilityState === 'visible' && $('#player').classList.contains('open');
+  if (again !== !!wakeLock) setTimeout(syncWakeLock, 300);
+}
 function setTextMode(on) {
   S.textMode = on;
+  setTimeout(syncWakeLock, 0);
   LS.set('miril.textmode', on);
   $('#player').classList.toggle('text-mode', on);
   $('#btn-text').classList.toggle('on', on);
@@ -1488,8 +1509,9 @@ audio.addEventListener('playing', () => {
     setTimeout(() => { if (S.book === b) probeDurations(b); }, 15000);
   }
 });
-audio.addEventListener('play', () => { S.touched = true; audio.playbackRate = prefs().speed || 1; renderPlayState(); });
-audio.addEventListener('pause', () => { renderPlayState(); recordPosition(true); });
+audio.addEventListener('play', () => { S.touched = true; audio.playbackRate = prefs().speed || 1; renderPlayState(); syncWakeLock(); });
+audio.addEventListener('pause', () => { renderPlayState(); recordPosition(true); syncWakeLock(); });
+document.addEventListener('visibilitychange', () => setTimeout(syncWakeLock, 200));
 audio.addEventListener('timeupdate', () => {
   if (!audio.error && !audio.seeking && audio.readyState >= 2 && S.pendingSeek == null) S.lastPos = audio.currentTime; renderChapterLabel(); renderTime(); recordPosition(false); checkSleep(); });
 audio.addEventListener('ended', () => {
@@ -1585,12 +1607,14 @@ function goChapter(i, play = !audio.paused) {
 
 /* ---- oynatıcı arayüzü ---- */
 function openPlayer() {
+  setTimeout(syncWakeLock, 50);
   $('#player').classList.add('open');
   if (S.textMode) setTimeout(() => txTick(true), 60);
   $('#player').setAttribute('aria-hidden', 'false');
   renderMini();
 }
 function closePlayer() {
+  setTimeout(syncWakeLock, 50);
   $('#player').classList.remove('open');
   if (S.profile && $('#v-library').classList.contains('on')) renderLibrary();
   $('#player').setAttribute('aria-hidden', 'true');
