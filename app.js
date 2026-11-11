@@ -6,7 +6,7 @@
      (apps-script.gs) tutulur. PC ↔ telefon böyle eşitlenir.
    - Klasör linki ve senkron adresi repoda değil, cihazın ayarlarında durur. */
 
-const APP_VERSION = '2026.11.11-14';
+const APP_VERSION = '2026.11.11-15';
 const CFG = window.MIRIL_CONFIG || {};
 const DRIVE = CFG.DRIVE_API || 'https://www.googleapis.com/drive/v3/';
 const HAS_KEY = !!CFG.API_KEY && !CFG.API_KEY.startsWith('BURAYA');
@@ -927,7 +927,7 @@ async function renderTx() {
     if (i && (sg[0] - d.s[i - 1][1] > 1.8 || n >= 7)) { html += '</p><p>'; n = 0; }
     n++;
     const words = sg[3]?.length ? sg[3] : [[sg[0], sg[1], ' ' + sg[2]]];
-    html += `<span class="seg" data-s="${i}">${words.map((w, j) => `<span class="w" data-w="${j}">${esc(w[2])}</span>`).join('')}</span>`;
+    html += `<span class="seg" data-s="${i}">${words.map((w, j) => { const m = /^(\s*)([\s\S]*)$/.exec(w[2]); return `${m[1] ? ' ' : ''}<span class="w" data-w="${j}">${esc(m[2])}</span>`; }).join('')}</span>`;
   });
   body.innerHTML = html + '</p>';
   setTimeout(applyMarksToTx, 0);
