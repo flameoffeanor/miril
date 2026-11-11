@@ -6,7 +6,7 @@
      (apps-script.gs) tutulur. PC ↔ telefon böyle eşitlenir.
    - Klasör linki ve senkron adresi repoda değil, cihazın ayarlarında durur. */
 
-const APP_VERSION = '2026.11.10-13';
+const APP_VERSION = '2026.11.11-14';
 const CFG = window.MIRIL_CONFIG || {};
 const DRIVE = CFG.DRIVE_API || 'https://www.googleapis.com/drive/v3/';
 const HAS_KEY = !!CFG.API_KEY && !CFG.API_KEY.startsWith('BURAYA');
@@ -1515,7 +1515,7 @@ document.addEventListener('visibilitychange', () => setTimeout(syncWakeLock, 200
 audio.addEventListener('timeupdate', () => {
   if (!audio.error && !audio.seeking && audio.readyState >= 2 && S.pendingSeek == null) S.lastPos = audio.currentTime; renderChapterLabel(); renderTime(); recordPosition(false); checkSleep(); });
 audio.addEventListener('ended', () => {
-  if (S.sleepChapter) { clearSleep(); recordPosition(true); toast('Bölüm bitti, iyi uykular 🌙'); return; }
+  if (S.sleepChapter) { sleepStopped(); recordPosition(true); toast('Bölüm bitti, iyi uykular 🌙'); return; }
   if (S.idx < S.book.files.length - 1) loadFile(S.idx + 1, 0, true);
   else {
     setProg(S.book.id, { fileId: S.book.files[0].id, t: 0, done: true });
@@ -1607,6 +1607,7 @@ function goChapter(i, play = !audio.paused) {
 
 /* ---- oynatıcı arayüzü ---- */
 function openPlayer() {
+  setTimeout(offerSleepBack, 700);
   setTimeout(syncWakeLock, 50);
   $('#player').classList.add('open');
   if (S.textMode) setTimeout(() => txTick(true), 60);
@@ -1725,18 +1726,73 @@ async function probeDurations(b) {
 let fadeTimer;
 function setSleep(min) {
   clearSleep();
-  if (min === 'ch') S.sleepChapter = true;
-  else if (min) S.sleepEnd = now() + min * 60000;
+  if (min) {
+    // Zamanlayıcının kurulduğu yer: uyuyakalınca ertesi gün buraya dönülebilsin
+    const f = S.book?.files[S.idx];
+    S.sleepFrom = S.book && f ? { bid: S.book.id, nm: bookKey(S.book), fileId: f.id, fn: stem(f.name), i: S.idx, t: Math.max(0, curPos()), min } : null;
+  } else S.sleepFrom = null;
+  if (min === 'ch') {
+    S.sleepChapter = true;
+    // Metinden bölüm algılandıysa bir sonraki bölüm başında dur; yoksa dosya sonunda
+    const ch = chaptersOf(S.book), k = curChapter();
+    S.sleepChAt = ch && ch[k + 1] ? { i: ch[k + 1].i, t: ch[k + 1].t } : null;
+  } else if (min) S.sleepEnd = now() + min * 60000;
   renderSleep();
   if (min) toast(min === 'ch' ? 'Bölüm sonunda duracak' : `${min} dk sonra duracak`);
 }
-function clearSleep() { S.sleepEnd = 0; S.sleepChapter = false; clearInterval(fadeTimer); audio.volume = VOL; renderSleep(); }
+function clearSleep() { S.sleepEnd = 0; S.sleepChapter = false; S.sleepChAt = null; clearInterval(fadeTimer); audio.volume = VOL; renderSleep(); }
+// Zamanlayıcı kitabı durdurdu: kurulduğu yeri sakla (profil bazında, senkronlu)
+function sleepStopped() {
+  S.wantPlay = false;
+  audio.pause();
+  if (S.sleepFrom && S.book) {
+    const f = S.book.files[S.idx];
+    setPrefs({ sleepBack: { ...S.sleepFrom, endI: S.idx, endFn: f ? stem(f.name) : '', endT: Math.floor(curPos()), stoppedAt: now() } });
+  }
+  S.sleepFrom = null;
+  clearSleep();
+}
 function checkSleep() {
+  if (S.sleepChAt && S.idx === S.sleepChAt.i && curPos() >= S.sleepChAt.t - 0.3) {
+    seekBy(-(curPos() - S.sleepChAt.t) - 0.5);   // yeni bölümün ilk kelimesini kaçırma
+    sleepStopped();
+    toast('Bölüm bitti, iyi uykular 🌙');
+    return;
+  }
   if (!S.sleepEnd) return;
   const left = S.sleepEnd - now();
   renderSleep();
   if (left <= 10000 && left > 0) audio.volume = VOL * Math.max(0.05, left / 10000);
-  if (left <= 0) { S.wantPlay = false; audio.pause(); seekBy(-10); clearSleep(); }
+  if (left <= 0) { seekBy(-10); sleepStopped(); }
+}
+// Bu kitap için geçerli bir "uyku öncesi" kaydı var mı? (son 3 gün, kaldığı yerden sonra oynatılmamış)
+function sleepBackFor(b) {
+  const sb = prefs().sleepBack;
+  if (!sb || !b || (sb.bid !== b.id && sb.nm !== bookKey(b))) return null;
+  if (now() - sb.stoppedAt > 3 * 864e5) return null;
+  return { ...sb, idx: fileIndexOf(b, sb) };
+}
+// kitap içindeki mutlak konum (dosya süreleri biliniyorsa), dakika farkını doğru hesaplamak için
+function absPos(b, i, t) { return b.files.slice(0, i).reduce((x, f) => x + (S.sync.durations[f.id] || 0), 0) + t; }
+function sleepBackMin(b, sb) {
+  const endIdx = fileIndexOf(b, { fn: sb.endFn, i: sb.endI });
+  return Math.max(1, Math.round((absPos(b, endIdx, sb.endT) - absPos(b, sb.idx, sb.t)) / 60));
+}
+function goSleepBack() {
+  const sb = sleepBackFor(S.book);
+  if (!sb) return;
+  setPrefs({ sleepBack: null });
+  seekToPos(sb.idx, sb.t);
+  toast('Zamanlayıcıyı kurduğun yere dönüldü');
+}
+function offerSleepBack() {
+  const sb = sleepBackFor(S.book);
+  if (!sb) return;
+  // sadece hâlâ zamanlayıcının durdurduğu yerdeyse öner (sonra dinlemeye devam ettiyse rahatsız etme)
+  const endIdx = fileIndexOf(S.book, { fn: sb.endFn, i: sb.endI });
+  if (endIdx !== S.idx || Math.abs(curPos() - sb.endT) > 90) return;
+  const back = sleepBackMin(S.book, sb);
+  toast(`Uyku zamanlayıcı kitabı durdurmuştu`, `Kurduğun yere dön (−${back} dk)`, goSleepBack, 15000);
 }
 function renderSleep() {
   const on = S.sleepEnd || S.sleepChapter;
@@ -1747,6 +1803,7 @@ setInterval(() => { if (S.sleepEnd && audio.paused) { /* duraklatılınca bekler
 
 /* ---- alt sayfa ---- */
 function openSheet(html) {
+  $('#toast').classList.remove('on');   // bildirim, sayfadaki butonların üstüne binmesin
   $('#sheet-body').innerHTML = html;
   $('#sheet').classList.add('on');
   $('#sheet-backdrop').classList.add('on');
@@ -1816,10 +1873,23 @@ function speedSheet() {
   });
 }
 function sleepSheet() {
-  const opts = [[5, '5 dakika'], [15, '15 dakika'], [30, '30 dakika'], [45, '45 dakika'], [60, '1 saat'], ['ch', 'Bu bölüm bitince']];
-  openSheet(`<h3>Uyku zamanlayıcı 🌙</h3><div class="opt-list">${opts.map(([v, l]) => `<button class="opt" data-v="${v}">${l}</button>`).join('')}
-    ${S.sleepEnd || S.sleepChapter ? '<button class="opt" data-v="0">Kapat</button>' : ''}</div>`);
+  const opts = [[5, '5 dk'], [15, '15 dk'], [30, '30 dk'], [45, '45 dk'], [60, '1 saat'], ['ch', 'Bölüm sonu']];
+  const on = S.sleepEnd || S.sleepChapter;
+  const sb = sleepBackFor(S.book);
+  const sbLine = sb ? (() => {
+    const back = sleepBackMin(S.book, sb);
+    const when = new Date(sb.stoppedAt).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+    return `<button class="opt sleep-back" id="sl-back"><span class="lbl">↺ Zamanlayıcıyı kurduğun yere dön</span><span class="dur">${when}'de durdu · −${back} dk</span></button>`;
+  })() : '';
+  openSheet(`<h3>Uyku zamanlayıcı 🌙</h3>
+    ${sbLine}
+    <div class="sleep-grid">${opts.map(([v, l]) => `<button data-v="${v}">${l}</button>`).join('')}</div>
+    ${on ? '<button class="opt" data-v="0" style="margin-top:8px">Zamanlayıcıyı kapat</button>' : ''}
+    <p class="sheet-sub">Geri sar</p>
+    <div class="sleep-grid rew">${[5, 10, 20, 30].map((m) => `<button data-r="${m}">−${m} dk</button>`).join('')}</div>`);
   document.querySelectorAll('[data-v]').forEach((el) => el.onclick = () => { const v = el.dataset.v; setSleep(v === 'ch' ? 'ch' : +v); closeSheet(); });
+  document.querySelectorAll('[data-r]').forEach((el) => el.onclick = () => { seekBy(-60 * +el.dataset.r); toast(`${el.dataset.r} dk geri sarıldı`); });
+  if ($('#sl-back')) $('#sl-back').onclick = () => { closeSheet(); goSleepBack(); };
 }
 
 /* =========================================================
@@ -1836,7 +1906,7 @@ function wire() {
   $('#btn-prev').onclick = () => jumpChapter(-1);
   $('#btn-next').onclick = () => jumpChapter(1);
   $('#btn-chapters').onclick = () => chaptersSheet(false);
-  $('#btn-speed').onclick = speedSheet;
+  $('#btn-speed-wrap').onclick = speedSheet;
   $('#btn-sleep').onclick = sleepSheet;
   $('#sheet-backdrop').onclick = closeSheet;
   $('#btn-me').onclick = () => { renderProfiles(false); show('profiles'); renderMini(); };
