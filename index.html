@@ -74,10 +74,12 @@
 <div id="player" class="player" aria-hidden="true">
   <div class="player-inner">
     <div class="player-top">
+      <span class="top-left">
       <button class="icon-btn" id="btn-close-player" aria-label="Kapat">
         <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
       </button>
-      <span class="now-label">Şimdi dinleniyor</span>
+      </span>
+      <h2 class="p-title" id="p-title"></h2>
       <span class="top-right">
       <button class="icon-btn" id="btn-search" aria-label="Kitapta ara" title="Kitapta ara (Ctrl+F)">
         <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
@@ -92,33 +94,29 @@
       <div class="tx-panel" id="tx-panel"><div id="tx-body" class="tx-body"></div></div>
       <button class="tx-now hidden" id="tx-now">↓ Şu an okunan yere dön</button>
     </div>
-    <div class="player-meta">
-      <h2 id="p-title"></h2>
-      <p id="p-author"></p>
-      <p class="chapter" id="p-chapter"></p>
+    <div class="ch-row">
+      <p class="chapter" id="p-chapter"></p><span id="p-author" hidden></span>
+      <button class="rbtn" id="btn-text" aria-label="Metin" title="Metin (T)"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 10h16M4 14h10M4 18h7"/></svg></button>
     </div>
     <div class="seek">
       <input type="range" id="p-seek" min="0" max="1000" value="0" step="1" aria-label="Konum">
       <div class="times"><span id="p-cur">0:00</span><span id="p-left">-0:00</span></div>
     </div>
     <div class="controls">
-      <button class="ctl" id="btn-prev" aria-label="Önceki bölüm"><svg viewBox="0 0 24 24"><path d="M6 5v14M19 5l-9 7 9 7z"/></svg></button>
+      <button class="ctl side" id="btn-speed-wrap" aria-label="Hız" title="Hız"><b id="btn-speed">1×</b></button>
       <button class="ctl skip" id="btn-back" aria-label="15 saniye geri"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.5-5.8M4 3v4h4"/></svg><span>15</span></button>
       <button class="play" id="btn-play" aria-label="Oynat"></button>
       <button class="ctl skip" id="btn-fwd" aria-label="30 saniye ileri"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.5-5.8M20 3v4h-4"/></svg><span>30</span></button>
-      <button class="ctl" id="btn-next" aria-label="Sonraki bölüm"><svg viewBox="0 0 24 24"><path d="M18 5v14M5 5l9 7-9 7z"/></svg></button>
+      <button class="ctl side" id="btn-sleep" aria-label="Uyku zamanlayıcı" title="Uyku zamanlayıcı"><svg viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg><i class="bdg" id="sleep-label"></i></button>
     </div>
     <p class="book-progress" id="p-book"></p>
     <div class="volume">
-      <button class="icon-btn" id="btn-mute" aria-label="Sesi kapat"></button>
-      <input type="range" id="p-vol" min="0" max="100" step="1" value="100" aria-label="Ses seviyesi">
-    </div>
-    <div class="toolbar">
-      <button class="tool" id="btn-speed-wrap"><b id="btn-speed">1×</b><span>Hız</span></button>
-      <button class="tool" id="btn-sleep"><svg viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg><span id="sleep-label">Uyku</span></button>
-      <button class="tool" id="btn-text"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 10h16M4 14h10M4 18h7"/></svg><span>Metin</span></button>
-      <button class="tool" id="btn-mark"><svg viewBox="0 0 24 24"><path d="M6 3h12v18l-6-4-6 4z"/></svg><span id="mark-label">Ayraç</span></button>
-      <button class="tool" id="btn-dl"><svg viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg><span id="dl-label">İndir</span></button>
+      <button class="rbtn" id="btn-mark" aria-label="Ayraç" title="Ayraç"><svg viewBox="0 0 24 24"><path d="M6 3h12v18l-6-4-6 4z"/></svg><i class="bdg" id="mark-label"></i></button>
+      <div class="vol-mid">
+        <button class="icon-btn" id="btn-mute" aria-label="Sesi kapat"></button>
+        <input type="range" id="p-vol" min="0" max="100" step="1" value="100" aria-label="Ses seviyesi">
+      </div>
+      <button class="rbtn" id="btn-dl" aria-label="İndir" title="İndir"><svg viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg><i class="bdg" id="dl-label"></i></button>
     </div>
   </div>
 </div>

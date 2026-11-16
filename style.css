@@ -402,3 +402,33 @@ input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 
 
 /* Koyu temada pastel otomatik kapaklar göz almasın */
 .gen { background: rgba(10, 14, 12, .26); }
+
+/* ---------- Çalma ekranı v2: yazısız butonlar ---------- */
+.player-top { display: grid; grid-template-columns: 88px 1fr 88px; align-items: center; gap: 4px; }
+.player-top .top-right { display: flex; justify-content: flex-end; }
+.p-title { margin: 0; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+  font-family: var(--display); font-weight: 700; font-variation-settings: 'SOFT' 100; font-size: 22px; line-height: 1.25; color: var(--ink); }
+.ch-row { flex: none; display: flex; align-items: center; gap: 10px; margin-top: 2px; }
+.ch-row .chapter { flex: 1; min-width: 0; margin: 0; font-weight: 700; font-size: 14px; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: left; }
+.player.text-mode .ch-row { margin-top: 0; }
+.rbtn { width: 44px; height: 44px; flex: none; border-radius: 14px; display: grid; place-items: center; color: var(--ink); position: relative; transition: transform .15s, background .15s; }
+.rbtn:hover { background: var(--bg2); }
+.rbtn:active, .ctl.side:active { transform: scale(.88); }
+.rbtn svg { width: 22px; height: 22px; }
+.rbtn.on, .ctl.side.on { background: var(--accent-soft); color: var(--accent); }
+.ctl.side { border-radius: 16px; color: var(--ink); }
+.ctl.side b { font-size: 17px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.ctl.side svg { width: 24px; height: 24px; }
+.bdg { position: absolute; left: 50%; bottom: -6px; transform: translateX(-50%); font-style: normal; font-size: 10.5px; font-weight: 800; line-height: 1; color: var(--accent); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.bdg:empty { display: none; }
+#btn-mark .bdg { left: auto; right: 4px; top: 4px; bottom: auto; transform: none; }
+.volume { display: flex; align-items: center; gap: 6px; padding: 0; }
+.vol-mid { flex: 1; display: flex; align-items: center; gap: 4px; max-width: 220px; margin: 0 auto; }
+.vol-mid input { flex: 1; }
+.volume { margin: 4px 0 0; }
+.controls { margin-bottom: 0; }
+.player-inner { padding-bottom: calc(14px + env(safe-area-inset-bottom)); }
+.seek { margin-top: 6px; }
+/* Oynatıcı açıkken bildirimler üstte çıksın, oynat düğmesini kapatmasın */
+.player.open ~ .toast { top: calc(58px + env(safe-area-inset-top)); bottom: auto; width: min(380px, calc(100vw - 32px)); justify-content: space-between; transform: translate(-50%, -20px); }
+.player.open ~ .toast.on { transform: translate(-50%, 0); }

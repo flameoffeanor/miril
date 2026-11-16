@@ -6,7 +6,7 @@
      (apps-script.gs) tutulur. PC ↔ telefon böyle eşitlenir.
    - Klasör linki ve senkron adresi repoda değil, cihazın ayarlarında durur. */
 
-const APP_VERSION = '2026.11.16-1';
+const APP_VERSION = '2026.11.17-1';
 const CFG = window.MIRIL_CONFIG || {};
 const DRIVE = CFG.DRIVE_API || 'https://www.googleapis.com/drive/v3/';
 const HAS_KEY = !!CFG.API_KEY && !CFG.API_KEY.startsWith('BURAYA');
@@ -590,7 +590,8 @@ function renderDlChip() {
   if (!chip || !S.book) return;
   const d = dlState(S.book);
   chip.classList.toggle('on', d.all && !d.job);
-  $('#dl-label').textContent = d.job ? `%${Math.min(100, Math.round(d.job.done / d.job.total * 100))}` : d.all ? 'İndirildi' : d.any ? `${d.n}/${S.book.files.length}` : 'İndir';
+  $('#dl-label').textContent = d.job ? `%${Math.min(100, Math.round(d.job.done / d.job.total * 100))}` : (d.any && !d.all) ? `${d.n}/${S.book.files.length}` : '';
+  chip.title = d.job ? 'İndiriliyor' : d.all ? 'İndirildi' : 'İndir';
 }
 
 /* =========================================================
@@ -774,7 +775,7 @@ function marksSheet() {
 }
 function renderMarkChip() {
   const n = S.book && S.profile ? marksOf(S.book).length : 0;
-  $('#mark-label').textContent = n ? `Ayraç · ${n}` : 'Ayraç';
+  $('#mark-label').textContent = n || '';
 }
 // Metin modunda ayraçlı cümleleri işaretle
 function applyMarksToTx() {
@@ -1064,7 +1065,6 @@ function renderChapterLabel() {
     updateMediaSession();
   } else txt = b.files.length > 1 ? `${S.idx + 1} / ${b.files.length} · ${chapterName(b.files[S.idx], S.idx)}` : '';
   $('#p-chapter').textContent = txt;
-  $('#btn-prev').style.visibility = $('#btn-next').style.visibility = (ch || b.files.length > 1) ? 'visible' : 'hidden';
 }
 function jumpChapter(dir) {
   const ch = chaptersOf(S.book);
@@ -1609,7 +1609,7 @@ function goChapter(i, play = !audio.paused) {
 function openPlayer() {
   setTimeout(offerSleepBack, 700);
   setTimeout(syncWakeLock, 50);
-  $('#player').classList.add('open');
+  $('#player').classList.add('open'); fitTitle();
   if (S.textMode) setTimeout(() => txTick(true), 60);
   $('#player').setAttribute('aria-hidden', 'false');
   renderMini();
@@ -1625,11 +1625,19 @@ function renderPlayerStatic() {
   const b = S.book;
   $('#p-cover').innerHTML = coverHTML(b, 'lg');
   $('#p-title').textContent = b.title;
+  fitTitle();
   $('#p-author').textContent = b.author;
   const [c1] = COVER_PAIRS[hash(b.title + b.author) % COVER_PAIRS.length];
   $('#player').style.setProperty('--tint', `radial-gradient(circle at 50% 20%, ${c1}, transparent 60%)`);
   $('#btn-speed').textContent = fmtSpeed(prefs().speed || 1);
   renderDlChip();
+}
+// Kitap adı tek satıra sığsın: sığmazsa yazıyı küçült
+function fitTitle() {
+  const el = $('#p-title');
+  if (!el || !$('#player').classList.contains('open') && !el.textContent) return;
+  let f = 22; el.style.fontSize = f + 'px';
+  while (f > 12 && el.scrollWidth > el.clientWidth + 1) { f -= 0.5; el.style.fontSize = f + 'px'; }
 }
 const fmtSpeed = (s) => String(s).replace('.', ',') + '×';
 function chapterName(f, i) {
@@ -1797,7 +1805,7 @@ function offerSleepBack() {
 function renderSleep() {
   const on = S.sleepEnd || S.sleepChapter;
   $('#btn-sleep').classList.toggle('on', !!on);
-  $('#sleep-label').textContent = S.sleepChapter ? 'Bölüm sonu' : S.sleepEnd ? fmt((S.sleepEnd - now()) / 1000) : 'Uyku';
+  $('#sleep-label').textContent = S.sleepChapter ? 'bölüm' : S.sleepEnd ? fmt((S.sleepEnd - now()) / 1000) : '';
 }
 setInterval(() => { if (S.sleepEnd && audio.paused) { /* duraklatılınca bekler */ S.sleepEnd += 1000; } renderSleep(); }, 1000);
 
@@ -1903,8 +1911,7 @@ function wire() {
   $('#btn-close-player').onclick = closePlayer;
   $('#btn-back').onclick = () => seekBy(-15);
   $('#btn-fwd').onclick = () => seekBy(30);
-  $('#btn-prev').onclick = () => jumpChapter(-1);
-  $('#btn-next').onclick = () => jumpChapter(1);
+  addEventListener('resize', fitTitle);
   $('#btn-chapters').onclick = () => chaptersSheet(false);
   $('#btn-speed-wrap').onclick = speedSheet;
   $('#btn-sleep').onclick = sleepSheet;
