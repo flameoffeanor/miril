@@ -6,7 +6,7 @@
      (apps-script.gs) tutulur. PC ↔ telefon böyle eşitlenir.
    - Klasör linki ve senkron adresi repoda değil, cihazın ayarlarında durur. */
 
-const APP_VERSION = '2026.11.17-1';
+const APP_VERSION = '2026.11.17-2';
 const CFG = window.MIRIL_CONFIG || {};
 const DRIVE = CFG.DRIVE_API || 'https://www.googleapis.com/drive/v3/';
 const HAS_KEY = !!CFG.API_KEY && !CFG.API_KEY.startsWith('BURAYA');
@@ -636,6 +636,7 @@ async function pullRemote() {
     S.sync = merge(S.sync, remote);
     saveLocal();
     S.syncOk = true; S.syncAt = now();
+    return remote;
   } catch (e) { S.syncOk = false; throw e; }
 }
 
@@ -1435,11 +1436,11 @@ function reloadCurrent(play) {
 
 // Diğer cihazdaki son konumu çek; bu cihaz duraklatılmışken orası ilerideyse oraya geç.
 let lastPull = 0, catching = null;
-function catchUp(play) {
+function catchUp(play, alreadyPulled) {
   if (DEMO || !ready() || !S.profile) return Promise.resolve(false);
   if (catching) return catching;
   catching = (async () => {
-    try {
+    if (!alreadyPulled) try {
       await Promise.race([pullRemote(), new Promise((_, rej) => setTimeout(() => rej(new Error('zaman aşımı')), 2500))]);
     } catch (e) { console.warn('pull', e); return false; }
     finally { lastPull = now(); }
@@ -1470,8 +1471,24 @@ async function safePlay() {
     loadFile(S.idx, S.pendingSeek ?? S.lastPos ?? 0, false);
   }
   // Oynat'a basınca önce diğer cihaza bak (pencere hep açık kalsa bile doğru yerden başlasın).
-  if (audio.paused && now() - lastPull > 4000 && await catchUp(true)) return;
+  // Beklemeden çal; diğer cihaza arkadan bak, orada daha yeni bir yer varsa oraya geç.
+  const look = audio.paused && S.book && S.profile && !DEMO && ready() && now() - lastPull > 3000;
+  const book = S.book, before = look ? (prog(book.id)?.at || 0) : 0;
   try { await audio.play(); } catch (e) { if (e.name !== 'AbortError') console.warn(e); }
+  if (look) lateCatchUp(book, before);
+}
+async function lateCatchUp(b, before) {
+  let remote;
+  try { remote = await pullRemote(); } catch (e) { console.warn('pull', e); return; } finally { lastPull = now(); }
+  if (S.book !== b || !S.profile) return;
+  const all = remote?.progress?.[S.profile.id] || {};
+  const key = bookKey(b);
+  const r = all[b.id] || Object.entries(all).find(([k, v]) => !k.startsWith(MK) && v?.nm === key)?.[1];
+  if (!r || r.done || (r.at || 0) <= before) return;   // diğer cihazda bundan yeni bir kayıt yok
+  const pi = fileIndexOf(b, r);
+  if (pi === S.idx && Math.abs((r.t || 0) - audio.currentTime) < 8) return;
+  loadFile(pi, Math.max(0, r.t - 3), true);
+  toast('Diğer cihazdaki yerden devam ediyor');
 }
 function togglePlay() { if (audio.paused) safePlay(); else { S.wantPlay = false; audio.pause(); } }
 
@@ -1482,8 +1499,12 @@ function recordPosition(force) {
   if (!force && now() - S.lastLocalSave < 3000) return;
   if (!force && !S.touched) return;   // sadece açılıp bakıldıysa kayıt oluşturma
   if (audio.error || !audio.src) return;   // oynatıcı hatada/boşken konum güvenilmez
+  const t = Math.floor(curPos());
+  // Konum değişmediyse kaydı yenileme: yeni tarihli aynı kayıt, diğer cihazın daha yeni yerini ezebiliyordu.
+  const old = prog(S.book.id);
+  if (old && !old.done && old.fileId === f.id && old.t === t) return;
   S.touched = true;
-  setProg(S.book.id, { fileId: f.id, t: Math.floor(curPos()) });
+  setProg(S.book.id, { fileId: f.id, t });
   saveLocal();
   if (force || now() - S.lastRemotePush > 60000) pushSoon(force ? 300 : 0);
 }
@@ -1960,7 +1981,8 @@ function wire() {
   // Sekme gizlenince kaydet; geri gelince diğer cihazdaki ilerlemeyi çek.
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
-      recordPosition(true); pushOnExit();
+      if (S.touched) recordPosition(true);
+      pushOnExit();
       if (S.book && audio.paused && audio.src && !audio.src.includes('/offline/') && !audio.src.startsWith('blob:')) {
         S.lastPos = S.pendingSeek ?? audio.currentTime ?? S.lastPos ?? 0;
         audio.removeAttribute('src'); audio.load();   // Chrome askıya alınmış oynatıcıyı geri açarken hata verebiliyor
@@ -1974,7 +1996,7 @@ function wire() {
   // Pencere açık kalsa bile: odağa gelince ve duraklatılmışken 20 sn'de bir diğer cihazı kontrol et.
   window.addEventListener('focus', () => { if (now() - lastPull > 3000) catchUp(false); });
   setInterval(() => { if (document.visibilityState === 'visible' && audio.paused && now() - lastPull > 20000) catchUp(false); }, 5000);
-  window.addEventListener('pagehide', () => { recordPosition(true); pushOnExit(); });
+  window.addEventListener('pagehide', () => { if (S.touched) recordPosition(true); pushOnExit(); });
   window.addEventListener('beforeunload', (e) => { if (Object.keys(S.jobs).length) { e.preventDefault(); e.returnValue = ''; } });
   window.addEventListener('online', () => { toast('İnternet geri geldi'); refreshLibrary(false); pushSoon(500); });
   $('#btn-dl').onclick = () => S.book && dlSheet(S.book);
@@ -2096,9 +2118,17 @@ async function afterData() {
 async function startReal() {
   S.sync = merge(LS.get(lsKey('sync')), null);
   S.books = LS.get('miril.lib') || [];
-  try { await pullRemote(); } catch (e) { console.warn('pull', e); toast('Senkrona ulaşılamadı, bu cihazdaki kayıtla devam'); }
-  if (!S.books.length) showSkeleton();
+  // Senkronu beklemeden bu cihazdaki kayıtla hemen aç; diğer cihazın kaydı arkadan gelince yerine geç.
+  const pulled = pullRemote().then(() => true, (e) => { console.warn('pull', e); toast('Senkrona ulaşılamadı, bu cihazdaki kayıtla devam'); return false; });
+  const local = S.books.length && profiles().length;
+  if (!local) { await pulled; if (!S.books.length) showSkeleton(); }
   await afterData();
+  if (local) pulled.then((ok) => {
+    lastPull = now();
+    if (!ok) return;
+    if (!S.profile) { if ($('#v-profiles').classList.contains('on')) renderProfiles(); return; }
+    catchUp(false, true);
+  });
   if (S.fromSetupLink) toast('Kurulum tamam 🎉');
   refreshLibrary(false);
   pushSoon(2000);
