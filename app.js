@@ -6,7 +6,7 @@
      (apps-script.gs) tutulur. PC ↔ telefon böyle eşitlenir.
    - Klasör linki ve senkron adresi repoda değil, cihazın ayarlarında durur. */
 
-const APP_VERSION = '2026.11.17-4';
+const APP_VERSION = '2026.11.17-5';
 const CFG = window.MIRIL_CONFIG || {};
 const DRIVE = CFG.DRIVE_API || 'https://www.googleapis.com/drive/v3/';
 const HAS_KEY = !!CFG.API_KEY && !CFG.API_KEY.startsWith('BURAYA');
@@ -1017,8 +1017,20 @@ function txTick(force) {
   if (sg && el && sg[3]?.length) {
     const wi = bsearch(sg[3], t + 0.05, (x) => x[0]);
     const wel = wi >= 0 && t <= sg[1] + 0.3 ? el.children[wi] : null;
-    if (wel !== TXV.word) { TXV.word?.classList.remove('cur'); wel?.classList.add('cur'); TXV.word = wel; }
+    if (wel !== TXV.word) {
+      TXV.word?.classList.remove('cur'); wel?.classList.add('cur'); TXV.word = wel;
+      // Uzun cümlede okunan kelime aşağı kayıp ekrandan çıkmasın: alt kısma yaklaşınca satırı yukarı al
+      if (wel && follow) {
+        const panel = $('#tx-panel'), pr = panel.getBoundingClientRect(), wr = wel.getBoundingClientRect();
+        const rel = (wr.top - pr.top) / pr.height;
+        if (rel > 0.6 || rel < 0.08) txScrollBy(wr.top - pr.top - pr.height * 0.38);
+      }
+    }
   } else if (TXV.word) { TXV.word.classList.remove('cur'); TXV.word = null; }
+}
+function txScrollBy(dy) {
+  const panel = $('#tx-panel');
+  panel.scrollTo({ top: panel.scrollTop + dy, behavior: 'smooth' });
 }
 function txScrollTo(el, smooth) {
   const panel = $('#tx-panel');
