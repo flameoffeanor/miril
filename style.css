@@ -274,7 +274,7 @@ input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 
 @media (min-width: 700px) { .tx-body p { font-size: 22px; } }
 .tx-body .seg { transition: color .25s; }
 .tx-body .seg.cur { color: var(--ink); }
-.tx-body p:has(.seg.cur) { opacity: 1; }
+.tx-body p.curp { opacity: 1; }
 .tx-body .w { cursor: pointer; border-radius: 6px; transition: background .12s; }
 .tx-body .w:hover { text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 4px; }
 .tx-body .w.cur { background: var(--accent-soft); box-shadow: 0 0 0 2px var(--accent-soft); color: var(--ink); }
@@ -432,3 +432,4 @@ input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 
 /* Oynatıcı açıkken bildirimler üstte çıksın, oynat düğmesini kapatmasın */
 .player.open ~ .toast { top: calc(58px + env(safe-area-inset-top)); bottom: auto; width: min(380px, calc(100vw - 32px)); justify-content: space-between; transform: translate(-50%, -20px); }
 .player.open ~ .toast.on { transform: translate(-50%, 0); }
+.tx-panel { overflow-anchor: none; }   /* kaydırma düzeltmesini kod yapıyor; tarayıcı da yaparsa ekran zıplıyordu */

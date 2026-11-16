@@ -6,7 +6,7 @@
      (apps-script.gs) tutulur. PC ↔ telefon böyle eşitlenir.
    - Klasör linki ve senkron adresi repoda değil, cihazın ayarlarında durur. */
 
-const APP_VERSION = '2026.11.17-2';
+const APP_VERSION = '2026.11.17-3';
 const CFG = window.MIRIL_CONFIG || {};
 const DRIVE = CFG.DRIVE_API || 'https://www.googleapis.com/drive/v3/';
 const HAS_KEY = !!CFG.API_KEY && !CFG.API_KEY.startsWith('BURAYA');
@@ -782,7 +782,7 @@ function renderMarkChip() {
 function applyMarksToTx() {
   renderMarkChip();
   if (!TXV?.data || !S.book) return;
-  TXV.segEls.forEach((el) => el.classList.remove('marked'));
+  document.querySelectorAll('#tx-body .seg.marked').forEach((el) => el.classList.remove('marked'));
   const f = S.book.files[S.idx];
   for (const m of marksOf(S.book)) {
     if (m.idx !== S.idx || TXV.fileId !== f.id) continue;
@@ -906,7 +906,7 @@ async function renderTx() {
   const f = S.book.files[S.idx];
   if (TXV?.fileId === f.id) return;
   const body = $('#tx-body');
-  TXV = { fileId: f.id, data: null, segEls: [], seg: -1, word: null };
+  TXV = { fileId: f.id, data: null, segEls: [], seg: -1, word: null, a: 0, b: 0, br: null, curP: null };
   if (!f.tx && !f.demo) {
     body.innerHTML = `<div class="tx-msg"><div class="big">📝</div><p>${hasTx(S.book) ? 'Bu bölümün metni yok.' : 'Bu kitabın metni henüz çıkarılmamış.'}</p><p class="small">PC'deki <b>Mırıl Metin</b> aracını çalıştırınca burada görünür.</p></div>`;
     return;
@@ -923,19 +923,69 @@ async function renderTx() {
   }
   if (TXV?.fileId !== f.id) return;
   TXV.data = d;
-  // Cümleleri paragraflara grupla: uzun sessizlikte ya da her 7 cümlede bir yeni paragraf.
-  let html = '<p>', n = 0;
-  d.s.forEach((sg, i) => {
-    if (i && (sg[0] - d.s[i - 1][1] > 1.8 || n >= 7)) { html += '</p><p>'; n = 0; }
-    n++;
+  // Paragraf başları: uzun sessizlikte ya da her 7 cümlede bir.
+  const br = new Uint8Array(d.s.length);
+  for (let i = 0, n = 0; i < d.s.length; i++) { if (!i || d.s[i][0] - d.s[i - 1][1] > 1.8 || n >= 7) { br[i] = 1; n = 0; } n++; }
+  TXV.br = br;
+  const si = bsearch(d.s, (audio.currentTime || S.pendingSeek || 0) + 0.05, (x) => x[0]);
+  txWindow(Math.max(0, si));
+  txTick(true);
+}
+/* Uzun kitapta tüm metni sayfaya basmak telefonu donduruyordu (20 saatlik kitapta ~180 bin kelime).
+   Sadece okunan yerin etrafındaki cümleler çizilir; kaydırdıkça ya da okuma ilerledikçe devamı eklenir. */
+const TXW = 120;
+function txHTML(a, b) {
+  const d = TXV.data;
+  let html = '';
+  for (let i = a; i < b; i++) {
+    if (i === a || TXV.br[i]) html += (i === a ? '' : '</p>') + '<p>';
+    const sg = d.s[i];
     const words = sg[3]?.length ? sg[3] : [[sg[0], sg[1], ' ' + sg[2]]];
     html += `<span class="seg" data-s="${i}">${words.map((w, j) => { const m = /^(\s*)([\s\S]*)$/.exec(w[2]); return `${m[1] ? ' ' : ''}<span class="w" data-w="${j}">${esc(m[2])}</span>`; }).join('')}</span>`;
-  });
-  body.innerHTML = html + '</p>';
-  setTimeout(applyMarksToTx, 0);
-  TXV.segEls = [...body.querySelectorAll('.seg')];
-  TXV.seg = -1;
-  txTick(true);
+  }
+  return html + '</p>';
+}
+function txIndex(root) { root.querySelectorAll('.seg').forEach((el) => { TXV.segEls[+el.dataset.s] = el; }); }
+function txWindow(center) {
+  const n = TXV.data.s.length;
+  TXV.a = Math.max(0, center - TXW); TXV.b = Math.min(n, center + TXW);
+  const body = $('#tx-body');
+  body.innerHTML = txHTML(TXV.a, TXV.b);
+  TXV.segEls = []; txIndex(body);
+  TXV.seg = -1; TXV.word = null; TXV.curP = null;
+  applyMarksToTx();
+}
+// dir < 0: üste ekle, dir > 0: alta ekle. Çok büyürse diğer uçtan kırp.
+function txExtend(dir) {
+  if (!TXV?.data) return;
+  const panel = $('#tx-panel'), body = $('#tx-body'), n = TXV.data.s.length;
+  if (dir < 0 && TXV.a > 0) {
+    const na = Math.max(0, TXV.a - TXW);
+    const tmp = document.createElement('div'); tmp.innerHTML = txHTML(na, TXV.a);
+    const h0 = body.scrollHeight;
+    body.prepend(...tmp.childNodes);
+    panel.scrollTop += body.scrollHeight - h0;
+    txIndex(body); TXV.a = na;
+  } else if (dir > 0 && TXV.b < n) {
+    const nb = Math.min(n, TXV.b + TXW);
+    const tmp = document.createElement('div'); tmp.innerHTML = txHTML(TXV.b, nb);
+    body.append(...tmp.childNodes);
+    txIndex(body); TXV.b = nb;
+  } else return;
+  // en fazla ~5 pencere tut
+  const max = TXW * 5;
+  if (TXV.b - TXV.a > max) {
+    const h0 = body.scrollHeight;
+    if (dir > 0) { while (TXV.b - TXV.a > max && body.firstElementChild) { const p = body.firstElementChild; p.querySelectorAll('.seg').forEach((el) => delete TXV.segEls[+el.dataset.s]); p.remove(); TXV.a = +(body.querySelector('.seg')?.dataset.s ?? TXV.b); } panel.scrollTop -= h0 - body.scrollHeight; }
+    else { while (TXV.b - TXV.a > max && body.lastElementChild) { const p = body.lastElementChild; p.querySelectorAll('.seg').forEach((el) => delete TXV.segEls[+el.dataset.s]); p.remove(); const segs = body.querySelectorAll('.seg'); TXV.b = segs.length ? +segs[segs.length - 1].dataset.s + 1 : TXV.a; } }
+  }
+  applyMarksToTx();
+}
+function txEdges() {
+  if (!TXV?.data || !S.textMode) return;
+  const panel = $('#tx-panel');
+  if (panel.scrollTop < 500) txExtend(-1);
+  else if (panel.scrollHeight - panel.scrollTop - panel.clientHeight < 500) txExtend(1);
 }
 function bsearch(arr, t, get) { // t'den küçük ya da eşit son başlangıç
   let lo = 0, hi = arr.length - 1, ans = -1;
@@ -948,13 +998,19 @@ function txTick(force) {
   const t = audio.currentTime || 0;
   const segs = TXV.data.s;
   const si = bsearch(segs, t + 0.05, (x) => x[0]);
+  const follow = force || now() - txUserScroll > 8000;
+  // okunan yer çizili alanın dışına çıktıysa: takipteysek pencereyi oraya taşı
+  if (si >= 0 && (si < TXV.a || si >= TXV.b) && follow) { txWindow(si); force = true; }
+  else if (follow && si >= TXV.b - 25 && TXV.b < segs.length) txExtend(1);
   if (si !== TXV.seg || force) {
     TXV.segEls[TXV.seg]?.classList.remove('cur');
     TXV.seg = si;
     const el = TXV.segEls[si];
+    const p = el?.parentElement || null;
+    if (p !== TXV.curP) { TXV.curP?.classList.remove('curp'); p?.classList.add('curp'); TXV.curP = p; }
     if (el) {
       el.classList.add('cur');
-      if (now() - txUserScroll > 8000) txScrollTo(el, !force);
+      if (follow) txScrollTo(el, !force);
     }
   }
   const sg = segs[si], el = TXV.segEls[si];
@@ -962,7 +1018,7 @@ function txTick(force) {
     const wi = bsearch(sg[3], t + 0.05, (x) => x[0]);
     const wel = wi >= 0 && t <= sg[1] + 0.3 ? el.children[wi] : null;
     if (wel !== TXV.word) { TXV.word?.classList.remove('cur'); wel?.classList.add('cur'); TXV.word = wel; }
-  }
+  } else if (TXV.word) { TXV.word.classList.remove('cur'); TXV.word = null; }
 }
 function txScrollTo(el, smooth) {
   const panel = $('#tx-panel');
@@ -1136,10 +1192,11 @@ async function runSearch(b, query) {
   files.forEach(({ f, i }, k) => {
     const d = datas[k];
     if (!d) return;
-    d.s.forEach((sg) => {
-      const ft = fold(sg[2]);
+    const folded = d._f || (d._f = d.s.map((sg) => fold(sg[2])));   // bir kere hazırla, her aramada tekrar etme
+    for (let k2 = 0; k2 < d.s.length && res.length < 300; k2++) {
+      const sg = d.s[k2], ft = folded[k2];
       const at = ft.indexOf(fq);
-      if (at < 0 || res.length >= 300) return;
+      if (at < 0) continue;
       // eşleşen ilk kelimenin zamanı
       let t = sg[0];
       if (sg[3]?.length) {
@@ -1147,7 +1204,7 @@ async function runSearch(b, query) {
         for (const w of sg[3]) { const wl = w[2].trim().length; if (pos + wl > at) { t = w[0]; break; } pos += wl + 1; }
       }
       res.push({ i, t, text: sg[2], at, len: fq.length, same: ft.length === sg[2].length });
-    });
+    }
   });
   const snip = (r) => {
     if (!r.same) return esc(r.text);
@@ -2008,7 +2065,9 @@ function wire() {
   const userScroll = () => { txUserScroll = now(); $('#tx-now').classList.remove('hidden'); };
   panel.addEventListener('wheel', userScroll, { passive: true });
   panel.addEventListener('touchmove', userScroll, { passive: true });
-  $('#tx-now').onclick = () => { txUserScroll = 0; const el = TXV?.segEls[TXV.seg]; if (el) txScrollTo(el, true); };
+  $('#tx-now').onclick = () => { txUserScroll = 0; txTick(true); };
+  let edgeQ = false;
+  panel.addEventListener('scroll', () => { if (edgeQ) return; edgeQ = true; requestAnimationFrame(() => { edgeQ = false; txEdges(); }); }, { passive: true });
   $('#tx-body').addEventListener('click', (e) => {
     const w = e.target.closest('.w'), sgEl = e.target.closest('.seg');
     if (!w || !sgEl || !TXV?.data) return;
