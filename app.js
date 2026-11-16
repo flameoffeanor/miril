@@ -6,7 +6,7 @@
      (apps-script.gs) tutulur. PC ↔ telefon böyle eşitlenir.
    - Klasör linki ve senkron adresi repoda değil, cihazın ayarlarında durur. */
 
-const APP_VERSION = '2026.11.17-3';
+const APP_VERSION = '2026.11.17-4';
 const CFG = window.MIRIL_CONFIG || {};
 const DRIVE = CFG.DRIVE_API || 'https://www.googleapis.com/drive/v3/';
 const HAS_KEY = !!CFG.API_KEY && !CFG.API_KEY.startsWith('BURAYA');
@@ -1482,6 +1482,7 @@ function loadFile(idx, t, play) {
   audio.src = fileSrc(f);
   audio.playbackRate = prefs().speed || 1;
   renderChapter();
+  renderTime();   // ▶'ye basmadan da kaldığın yer ve süre görünsün
   updateMediaSession();
   if (play) safePlay();
 }
